@@ -6,6 +6,6 @@ dependencies:
   tools:
     - type: "mcp"
       value: "moonlight-desktop"
-      description: "Local Desktop-first Moonlight/Apollo computer-use MCP"
+      description: "Local Moonlight/Apollo Desktop MCP"
 policy:
   allow_implicit_invocation: true

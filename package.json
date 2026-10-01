@@ -1,9 +1,9 @@
 {
   "name": "moonlight-desktop-mcp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
-  "description": "Local, Desktop-first visual computer-use MCP for Apollo and Moonlight-compatible hosts",
+  "description": "Headless Moonlight/GameStream desktop MCP for Apollo and Sunshine",
   "engines": {
     "node": ">=20"
   },
@@ -25,6 +25,8 @@
     "scripts/setup-native.js",
     "src",
     "README.md",
+    "install.sh",
+    "install.ps1",
     "moonlight-core.lock.json"
   ],
   "scripts": {

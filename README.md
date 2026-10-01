@@ -1,36 +1,79 @@
 # Moonlight Desktop MCP
 
-Moonlight Desktop MCP is a local stdio MCP server that gives an LLM visual,
-desktop-first control of a paired Apollo or Sunshine Windows host through the
-Moonlight/GameStream protocol. It receives decoded desktop frames locally,
-performs local OCR/template/diff analysis, and sends encrypted Moonlight mouse
-and keyboard input back over the same session.
+Moonlight Desktop MCP exposes a paired Apollo or Sunshine Desktop to an MCP
+client over the GameStream protocol. It starts a Desktop stream, returns
+screenshots, and accepts mouse and keyboard input in the same coordinate space.
 
-It is designed for requests such as “open Valheim”, “close Steam normally”, or
-“increase the Windows master volume by 10%”. The agent sees and operates the
-desktop like a remote user; it does not use the Windows registry, shell,
-process list, or a separately installed Windows agent.
+The intended loop is straightforward:
 
-## What it provides
+1. Start the Desktop session.
+2. Capture the current frame.
+3. Find the visible control, icon, or text.
+4. Send the smallest input that performs the requested action.
+5. Capture again and check the result.
 
-- Standard Apollo PIN pairing with a dedicated `Moonlight MCP` identity.
-- A headless Moonlight Desktop stream, screenshot capture, local OCR, visual
-  templates, material-change detection, and text/change waiting.
-- Reliable mouse movement, click, drag, scroll, typing, named keys, and
-  hotkeys, all in screenshot coordinate space.
-- Permission preflight and a clear “stream already in use” error. It never
-  takes over another Moonlight client’s session.
-- Desktop-first agent guidance: Apollo provider-app launch is available only
-  for an explicit user request.
-- A portable build/setup/doctor flow for macOS, Linux, and Windows clients.
+That makes it suitable for ordinary desktop tasks: opening an application from
+the desktop or Start menu, changing a visible setting, dismissing a dialog, or
+closing an application through its own UI. An application does not need to be
+registered in Apollo for this path to work.
 
-The Windows machine runs Apollo/Sunshine only. The MCP, native bridge, OCR
-cache, and paired-client identity live on the computer invoking the MCP.
+## What runs where
+
+| Location | Components |
+| --- | --- |
+| Windows host | Apollo or Sunshine and the Windows desktop being controlled |
+| Controlling machine | This MCP server, Moonlight transport bridge, screenshots, OCR cache, and paired client identity |
+
+The controlling machine pairs with Apollo as its own GameStream client. Its
+profile, frames, and OCR data stay local to that machine.
+
+## MCP surface
+
+| Need | Tools |
+| --- | --- |
+| Pair and inspect a host | `host_status`, `pairing_begin`, `pairing_status`, `profile_status` |
+| Check whether a session can start | `session_preflight`, `runtime_status` |
+| Start and stop a desktop | `session_start`, `session_status`, `session_stop` |
+| Read the screen | `screen_capture`, `screen_ocr`, `screen_find_text`, templates, crops, and diffs |
+| Interact | mouse, drag, scroll, text, named key, and hotkey tools |
+| Confirm an outcome | `session_wait_for_change`, `screen_wait_for_text` |
+
+`session_start` is the Desktop path. `provider_app_start` exists for a user who
+explicitly requests an Apollo-registered application. The full tool list is in
+[docs/TOOLS.md](docs/TOOLS.md).
+
+## Install or update
+
+Run the command for the computer that will run the MCP. It installs the local
+build prerequisites when its supported package manager is available, creates
+or updates a clean checkout, builds the native bridge, and preserves pairing
+state outside that checkout. If the Codex CLI is installed, it also adds the
+`moonlight-desktop` stdio entry when one does not already exist.
+
+macOS and Linux:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/install.sh | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/install.ps1 | iex
+```
+
+Run the same command again to update. The installers use Homebrew on macOS;
+`apt`, `dnf`, or `pacman` on Linux; and WinGet plus vcpkg on Windows. They can
+prompt for the package manager's administrator approval or license terms. The
+native bridge is built locally; this release does not yet ship platform
+binaries. See [docs/INSTALL.md](docs/INSTALL.md) for a reviewed/manual path,
+pinning to a tag or commit, and unsupported package-manager cases.
 
 ## Quick start
 
-Install the platform prerequisites listed in [the installation guide](docs/INSTALL.md),
-then from this project directory run:
+Install the controller-side prerequisites from [docs/INSTALL.md](docs/INSTALL.md),
+then build locally:
 
 ```sh
 npm ci
@@ -39,7 +82,7 @@ npm run build:native
 npm run doctor -- --strict
 ```
 
-Register the local server with your MCP client. For Codex on macOS/Linux:
+Register the stdio server with an MCP client. For Codex on macOS or Linux:
 
 ```sh
 codex mcp add moonlight-desktop \
@@ -47,45 +90,42 @@ codex mcp add moonlight-desktop \
   -- "$(command -v node)" "$(pwd)/src/index.js"
 ```
 
-The full macOS, Linux, and PowerShell instructions are in
-[docs/INSTALL.md](docs/INSTALL.md). A transport-neutral configuration example
-is in [examples/mcp-config.json](examples/mcp-config.json).
+For PowerShell and generic MCP-client configuration, see
+[docs/INSTALL.md](docs/INSTALL.md) and
+[examples/mcp-config.json](examples/mcp-config.json).
 
-## Pair once, then use the Desktop
+## First pairing and session
 
-1. Ask the MCP for `host_status` and `pairing_begin` using the Apollo
-   GameStream endpoint, usually `HOST:47989`.
-2. Open the returned `apolloWebUrl` from the invoker’s LAN-connected browser
-   and enter the one-time PIN returned by `pairing_begin`.
-3. Poll `pairing_status`. When it returns a profile, call
-   `session_preflight` for `computer_use`.
-4. If Apollo reports missing permissions, enable only the named toggles in
-   Apollo’s web UI. The MCP tells the user exactly which ones are missing and
-   never changes host permissions itself.
-5. Start `session_start`, capture the Desktop, interact through visible UI,
-   visually verify the result, and call `session_stop`.
+1. Call `host_status` with the host’s GameStream endpoint, typically
+   `HOST:47989`.
+2. Call `pairing_begin`, open the returned Apollo URL, and enter the PIN.
+3. Wait for `pairing_status` to return a profile.
+4. Call `session_preflight` with `computer_use`. If Apollo reports missing
+   permissions, change only the listed toggles in Apollo.
+5. Call `session_start`, then use capture → locate → input → verify.
+6. Call `session_stop` when the task is done or cannot be verified.
 
-The expected agent behavior, including confirmation boundaries and animated
-UI handling, is documented in [docs/AGENT-GUIDE.md](docs/AGENT-GUIDE.md).
+If Apollo already has an active GameStream application, the MCP reports that
+condition and does not replace the other session.
 
-## Version and update path
+## Agent behavior
 
-Check the installed MCP and native-bridge readiness:
+The bundled Codex skill encodes the operating loop above. It uses the Desktop
+by default, asks when the target is materially ambiguous, and requires a
+visible check before reporting success. Read [docs/AGENT-GUIDE.md](docs/AGENT-GUIDE.md)
+for the complete behavior contract.
+
+## Inspecting an installation
 
 ```sh
 npm run doctor -- --json
-```
-
-Ask an active MCP directly with the read-only `runtime_status` tool. To check
-for dependency changes without modifying anything:
-
-```sh
 npm run check:updates
-# Optional, source checkout only: compare Git HEAD with origin without fetching or pulling.
-npm run check:updates -- --remote
+npm run check:updates -- --remote  # source checkout only
 ```
 
-Review the report before updating. The safe update sequence is:
+These commands report local state; they do not update dependencies, rebuild
+the bridge, or change pairing data. For a source checkout, after reviewing an
+update, use:
 
 ```sh
 git pull --ff-only
@@ -95,25 +135,20 @@ npm run build:native
 npm test
 ```
 
-Never delete `MOONLIGHT_MCP_DATA_DIR` as part of an update: it contains the
-paired MCP identity. See [the update section](docs/INSTALL.md#updates) for
-details and rollback guidance.
+Keep `MOONLIGHT_MCP_DATA_DIR` when updating. It holds the paired client
+identity. [docs/INSTALL.md](docs/INSTALL.md) covers migration and rollback.
 
-## Documentation
+## Boundaries
 
-- [Install, configure, verify, update](docs/INSTALL.md)
-- [Compatibility and platform requirements](docs/COMPATIBILITY.md)
-- [Agent operating guide](docs/AGENT-GUIDE.md)
-- [Tool reference](docs/TOOLS.md)
-- [Architecture and design reasoning](docs/ARCHITECTURE.md)
-- [Security and data handling](docs/SECURITY.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Contributor and test guide](CONTRIBUTING.md)
+- One local Desktop stream at a time; an existing GameStream session is left
+  alone.
+- H.264 video only, with 1280×720/30fps defaults. Audio is not exposed.
+- No HEVC/AV1, clipboard, file transfer, session attach/recovery, or shared
+  multi-user control.
+- A local native build and a Desktop smoke test are required on each controller
+  platform.
 
-## Current scope
-
-The bridge negotiates H.264 video (up to 1280×720/30fps by default), omits
-audio, and permits one local session at a time. HEVC/AV1, audio, clipboard and
-file transfer, reconnect/attach to an existing session, and shared multi-user
-control are deliberately out of scope. See [compatibility](docs/COMPATIBILITY.md)
-before treating it as a general Moonlight replacement.
+See [compatibility](docs/COMPATIBILITY.md),
+[architecture](docs/ARCHITECTURE.md),
+[security](docs/SECURITY.md), and
+[troubleshooting](docs/TROUBLESHOOTING.md) for the technical details.

@@ -1,29 +1,99 @@
-# Install, configure, and update
+# Install and update
 
-Moonlight Desktop MCP runs locally on the MCP invoker. Install every item in
-this guide on the macOS, Linux, or Windows computer that runs Codex/the MCP;
-do not install anything beyond Apollo or Sunshine on the remote Windows host.
+Install Moonlight Desktop MCP on the machine that will invoke it. That machine
+holds the paired GameStream identity, receives the Desktop video, runs OCR, and
+sends input. The Windows machine provides Apollo or Sunshine and its Desktop
+application.
 
-## 1. Prerequisites
+## One command
 
-All platforms require Node.js 20 or newer, Git, CMake, a C compiler, OpenSSL
-development headers, FFmpeg development headers/libraries (`avcodec`,
-`avutil`, `swscale`), and a clone of this project.
+Run the matching command in a terminal on the controlling machine. Re-run the
+same command to update a clean installation.
 
-| Invoker platform | Suggested prerequisites |
+### macOS and Linux
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/install.sh | bash
+```
+
+### Windows PowerShell
+
+```powershell
+irm https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/install.ps1 | iex
+```
+
+The bootstrapper obtains the build prerequisites, checks out the project,
+builds the native Moonlight bridge, and runs `npm run doctor -- --strict`.
+It uses these platform tools:
+
+| Platform | Bootstrap dependencies |
 | --- | --- |
-| macOS | `brew install node cmake pkg-config ffmpeg openssl git` and Xcode Command Line Tools (`xcode-select --install`) |
+| macOS | Homebrew, Xcode Command Line Tools, Homebrew Node/CMake/FFmpeg/OpenSSL packages |
+| Linux | `apt`, `dnf`, or `pacman` with `sudo` when build packages are missing |
+| Windows | WinGet for Git, Node LTS, CMake, and Visual Studio Build Tools; vcpkg for FFmpeg and OpenSSL |
+
+Those tools may show their normal elevation, license, or first-install prompts.
+On macOS, install Xcode Command Line Tools with `xcode-select --install` if
+they are absent, allow the installation to finish, then re-run the command.
+
+The default source locations are:
+
+| Platform | Checkout location |
+| --- | --- |
+| macOS | `~/Library/Application Support/Moonlight Desktop MCP/app` |
+| Linux | `$XDG_DATA_HOME/moonlight-desktop-mcp/app`, or `~/.local/share/moonlight-desktop-mcp/app` |
+| Windows | `%LOCALAPPDATA%\Moonlight Desktop MCP\app` |
+
+The bootstrapper leaves a pre-existing `moonlight-desktop` Codex registration
+unchanged. When the Codex CLI is present and that registration is absent, it
+adds one pointing at the new checkout. Pairing data is stored separately, so an
+ordinary code update does not replace the client identity.
+
+### Review or pin an installation
+
+The commands above deliberately track the public `main` branch. Read the
+[macOS/Linux script](../install.sh) or [Windows script](../install.ps1) before
+running it if that is your preferred workflow.
+
+To hold both the downloaded script and checkout to a released tag or commit,
+replace `v0.6.0` below with the version you chose:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.6.0/install.sh \
+  | MOONLIGHT_MCP_REF=v0.6.0 bash
+```
+
+```powershell
+$env:MOONLIGHT_MCP_REF = "v0.6.0"; irm https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.6.0/install.ps1 | iex
+```
+
+For a separate checkout location, set `MOONLIGHT_MCP_INSTALL_DIR` before
+running the bootstrapper. An update stops if that checkout has local changes;
+commit or stash them first, or select a different directory. The bootstrapper
+accepts `MOONLIGHT_MCP_REPOSITORY` for a source mirror or local test checkout.
+
+## Manual installation
+
+Use this path when your package manager is not one of the supported bootstrap
+options, when you maintain dependencies yourself, or when you want to review
+every command.
+
+### Prerequisites
+
+All platforms need Node.js 20 or newer, Git, CMake, a C compiler, OpenSSL
+development headers, and FFmpeg development headers/libraries for `avcodec`,
+`avutil`, and `swscale`.
+
+| Controlling platform | Example prerequisites |
+| --- | --- |
+| macOS | `brew install node cmake pkg-config ffmpeg openssl@3 git`; install Xcode Command Line Tools with `xcode-select --install` |
 | Debian/Ubuntu | `sudo apt install nodejs npm git cmake pkg-config build-essential libssl-dev libavcodec-dev libavutil-dev libswscale-dev` |
-| Fedora/RHEL-family | Install Node.js, Git, CMake, a C toolchain, OpenSSL development files, and FFmpeg development files from the repositories enabled by your distribution. |
-| Windows | Node.js 20+, Git for Windows, Visual Studio Build Tools with “Desktop development with C++”, CMake, and FFmpeg/OpenSSL development packages. [vcpkg](https://vcpkg.io/) is a practical way to provide the latter two. |
+| Fedora/RHEL family | Node.js, Git, CMake, `pkgconf-pkg-config`, a C/C++ toolchain, OpenSSL development files, and FFmpeg development files from enabled repositories |
+| Windows | Node.js 20+, Git for Windows, Visual Studio Build Tools with C++ tools, CMake, FFmpeg, and OpenSSL. The included Windows bootstrapper provisions these with WinGet and vcpkg. |
 
-The host must be an Apollo or Sunshine machine reachable over the network and
-must expose the normal GameStream ports. Its user will approve pairing and
-grant only the requested Apollo client permissions through Apollo’s own web UI.
-
-## 2. Install the local project and native bridge
-
-From the project root:
+Clone the repository and build from its root:
 
 ```sh
 npm ci
@@ -32,52 +102,48 @@ npm run build:native
 npm run doctor -- --strict
 ```
 
-`setup:native` clones the exact, source-controlled
+`setup:native` clones the exact
 [`moonlight-common-c`](https://github.com/moonlight-stream/moonlight-common-c)
-revision in `moonlight-core.lock.json`, including its required submodules, into
-your platform cache. Set `MOONLIGHT_CORE_DIR` to use a separately managed,
-initialized checkout instead. `build:native` creates the local
-`moonlight-session-bridge` binary; it is not committed to source control.
+revision recorded in `moonlight-core.lock.json`, including required submodules,
+into the platform cache. Set `MOONLIGHT_CORE_DIR` when another initialized
+checkout should be used. `build:native` creates a local
+`moonlight-session-bridge` executable; it is not committed to the project.
 
-On Windows, when dependencies come from vcpkg, point CMake at its toolchain
-before building. In PowerShell, for example:
+For Windows dependencies installed by vcpkg, set its CMake toolchain before
+building:
 
 ```powershell
 $env:CMAKE_TOOLCHAIN_FILE = "C:\vcpkg\scripts\buildsystems\vcpkg.cmake"
 npm run build:native
 ```
 
-`CMAKE_GENERATOR` and `MOONLIGHT_MCP_BUILD_TYPE` are also honoured if your CMake
-environment needs them. The bridge source has Windows-specific atomic frame
-replacement support, but the final authority is `npm run doctor -- --strict`
-and a local Desktop session on the target platform.
+`CMAKE_GENERATOR`, `CMAKE_PREFIX_PATH`, and `MOONLIGHT_MCP_BUILD_TYPE` are
+also passed through to CMake when an environment needs them.
 
-## 3. Choose local data locations
+## Local state
 
-The MCP stores its paired client certificate/private key, temporary decoded
-frames, and downloaded OCR language data on the invoker. By default it uses:
+The MCP stores its paired client certificate/private key, decoded frames, and
+downloaded OCR language data on the controlling machine.
 
 | Platform | Default state directory |
 | --- | --- |
 | macOS | `~/Library/Application Support/Moonlight Desktop MCP` |
-| Linux | `$XDG_STATE_HOME/moonlight-desktop-mcp` or `~/.local/state/moonlight-desktop-mcp` |
+| Linux | `$XDG_STATE_HOME/moonlight-desktop-mcp`, or `~/.local/state/moonlight-desktop-mcp` |
 | Windows | `%LOCALAPPDATA%\Moonlight Desktop MCP` |
 
-Set `MOONLIGHT_MCP_DATA_DIR` to choose another private local directory. The
-previous source-checkout `data/profiles.json` location is read as a compatibility
-fallback when no new state file exists, so existing pairings remain usable. To
-move it permanently into the documented state location without printing its
-secrets, run this once:
+Set `MOONLIGHT_MCP_DATA_DIR` for another private location. The old
+source-checkout `data/profiles.json` path is read as a migration fallback. To
+move an existing profile without printing its secrets:
 
 ```sh
 npm run migrate:state -- --dry-run
 npm run migrate:state
 ```
 
-## 4. Configure an MCP client
+## MCP and agent configuration
 
-The server uses stdio. Substitute the absolute project path and Node executable
-for your installation.
+The server uses stdio. Replace the source path and Node path below when the
+checkout is elsewhere.
 
 ### Codex on macOS or Linux
 
@@ -99,53 +165,42 @@ codex mcp add moonlight-desktop --env "MOONLIGHT_MCP_DATA_DIR=$data" -- $node $e
 codex mcp get moonlight-desktop --json
 ```
 
-For another MCP client, use the equivalent configuration in
-[examples/mcp-config.json](../examples/mcp-config.json). The command must be
-able to launch Node, and its environment must retain the selected data path.
+For another MCP client, use the equivalent stdio configuration in
+[examples/mcp-config.json](../examples/mcp-config.json).
 
-## 5. Install LLM operating instructions for Codex
-
-The repository ships an opt-in Codex skill. It tells an agent to use visual
-Desktop interaction, verify effects, and release streams. Preview its target
-first, then install it only if you want to replace that same-named local skill:
+The repository also includes optional operating instructions for Codex. Preview
+the target, then replace that same-named local skill only when desired:
 
 ```sh
 npm run install:codex-skill -- --dry-run
 npm run install:codex-skill -- --force
 ```
 
-The skill requires the MCP registration named `moonlight-desktop`. It does not
-install an MCP server or alter a remote Windows host.
+## Verify and inspect
 
-## 6. Verify without remote input
+`npm run doctor -- --strict` checks local bridge readiness. After pairing, a
+safe connection test is `host_status`, `profiles_list`, `session_preflight`,
+`session_start`, and `screen_capture`, followed by `session_stop`; it sends no
+mouse or keyboard input.
 
-Run `npm run doctor -- --strict`, then invoke the read-only `runtime_status`
-tool. To test a paired host safely, ask an agent to use `host_status`,
-`profiles_list`, `session_preflight`, `session_start`, and `screen_capture`
-without mouse or keyboard tools; it must call `session_stop` afterwards.
-
-## Updates
-
-### Check first
+For an installed checkout, inspect state and available updates with:
 
 ```sh
 npm run doctor -- --json
 npm run check:updates
-npm run check:updates -- --remote  # Git checkout only; read-only remote comparison
+npm run check:updates -- --remote
 ```
 
-`check:updates` reports the installed MCP version, dependency updates from npm,
-and the pinned Moonlight core revision. `--remote` uses `git ls-remote` only;
-it does not fetch, checkout, pull, install, rebuild, or touch pairing data.
-The MCP’s `runtime_status` tool exposes the same installed-version/build-state
-information to an LLM.
+The `--remote` form performs a read-only Git comparison for source checkouts.
+The MCP's `runtime_status` tool reports the same local version and bridge state
+to an MCP client.
 
-### Apply a reviewed source update
+## Manual update and rollback
 
-Stop active streams, preserve any local changes, then:
+Stop active streams before an update. A clean source checkout can be refreshed
+and rebuilt with:
 
 ```sh
-git status --short
 git pull --ff-only
 npm ci
 npm run setup:native
@@ -154,15 +209,7 @@ npm test
 npm run doctor -- --strict
 ```
 
-If a new build fails, return to the previously known-good source revision and
-run the same `npm ci`, `setup:native`, and `build:native` sequence. Do not
-delete the data directory to roll back code: paired identities survive normal
-source and dependency updates.
-
-### Dependency updates
-
-Treat a major dependency update as a code change. Review its release notes,
-update `package.json` and `package-lock.json` deliberately, run the full test
-suite, build the bridge, and manually verify a non-consequential Desktop UI
-action. In particular, an OCR-engine update can change text recognition and
-click-target confidence.
+If a build fails after a source update, return the checkout to a previously
+known-good revision and repeat the build sequence. Keep
+`MOONLIGHT_MCP_DATA_DIR`: it contains the paired client identity and is not a
+code cache.

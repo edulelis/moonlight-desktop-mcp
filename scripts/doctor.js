@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import packageInfo from "../package.json" with { type: "json" };
 import { applicationDataDirectory, defaultBridgePath, defaultMoonlightCoreDirectory } from "../src/paths.js";
 
 function commandVersion(command, args) {
@@ -14,8 +15,8 @@ const platformSupported = ["darwin", "linux", "win32"].includes(process.platform
 const coreDirectory = defaultMoonlightCoreDirectory();
 const bridgePath = defaultBridgePath();
 const report = {
-  name: "moonlight-desktop-mcp",
-  version: "0.5.0",
+  name: packageInfo.name,
+  version: packageInfo.version,
   platform: process.platform,
   architecture: process.arch,
   node: process.version,

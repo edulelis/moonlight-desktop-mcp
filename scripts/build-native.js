@@ -25,5 +25,6 @@ const configureArgs = [
 ];
 if (process.env.CMAKE_TOOLCHAIN_FILE) configureArgs.push(`-DCMAKE_TOOLCHAIN_FILE=${process.env.CMAKE_TOOLCHAIN_FILE}`);
 if (process.env.CMAKE_GENERATOR) configureArgs.push("-G", process.env.CMAKE_GENERATOR);
+if (process.env.CMAKE_PREFIX_PATH) configureArgs.push(`-DCMAKE_PREFIX_PATH=${process.env.CMAKE_PREFIX_PATH}`);
 run("cmake", configureArgs);
 run("cmake", ["--build", buildDirectory, "--config", buildType, "--parallel"]);

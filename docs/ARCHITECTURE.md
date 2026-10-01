@@ -1,10 +1,10 @@
-# Architecture and design reasoning
+# Architecture
 
-## Goal
+## Role
 
-Provide a computer-use layer over an already-working Moonlight/Apollo path,
-without deploying a custom service, remote shell, browser extension, or CV
-agent on the Windows host.
+Provide a capture/input bridge over an existing Moonlight/Apollo connection.
+The Windows host runs Apollo or Sunshine; the MCP server, native bridge, and
+image helpers run on the machine that invokes the MCP.
 
 ## Data and control flow
 
@@ -18,12 +18,12 @@ LLM / MCP client
                          <-> Apollo/Sunshine on Windows
 ```
 
-The Node process owns tool contracts, pairing profiles, screenshots, OCR, and
-agent-facing safety semantics. The small C bridge uses the upstream Moonlight
-common C library for the real GameStream video/input protocol and FFmpeg only
-to decode H.264 frames into local RGB images.
+The Node process owns tool contracts, pairing profiles, screenshots, and OCR.
+The small C bridge uses the upstream Moonlight common C library for the
+GameStream video/input protocol and FFmpeg to decode H.264 frames into local
+RGB images.
 
-## Why Desktop first
+## Desktop launch rule
 
 Apollo provider apps are a host-defined launch registry. They are useful only
 when a user asks for one by name. Typical computer-use requests—open something
@@ -31,28 +31,25 @@ on the desktop, change an app setting, dismiss a dialog—need the actual visibl
 Windows desktop. `session_start` therefore launches only Apollo’s Desktop app;
 `provider_app_start` is a separate, explicit tool.
 
-This removes the common failure mode of treating a visible app as though it
-must be pre-registered in Apollo. It also keeps the agent grounded in the same
-interface the user sees.
+An application shown on the desktop need not be pre-registered in Apollo. The
+Desktop stream is therefore the appropriate path for a request to interact with
+visible Windows UI.
 
-## Why vision lives inside this MCP
+## Image helpers and coordinates
 
-Passing every remote screenshot to an independent CV service would require
-another connection, transform coordinate systems, and make verification
-ambiguous. The retained screenshot/template/OCR primitives run beside the
-Moonlight stream, return capture-space coordinates, and are scoped to the
-session that owns the input channel. That makes this loop deterministic:
+Screenshot, template, OCR, and difference helpers run beside the Moonlight
+stream. They return capture-space coordinates and belong to the session that
+owns the input channel. The resulting loop uses one coordinate system:
 
 1. Capture an image.
 2. Locate a visible target.
 3. Act in the same coordinate system.
 4. Capture or wait again to verify the effect.
 
-The MCP is intentionally not a general visual reasoning model. It provides
-reliable image primitives; the LLM decides what the user’s request means and
-asks a clarifying question when it materially changes the target.
+The helpers identify pixels, text, and change regions. The MCP client decides
+what the user's request means and asks when the target materially changes.
 
-## Safety boundaries
+## Session and credential boundaries
 
 - Pairing creates a separate client identity and PIN; existing Moonlight
   profiles are not imported or exposed.

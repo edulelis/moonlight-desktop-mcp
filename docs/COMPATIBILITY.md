@@ -8,9 +8,9 @@
 | MCP invoker | macOS, Linux, or Windows with Node.js 20+, the native bridge prerequisites, and network reachability to the host |
 | Transport | Moonlight/GameStream control, video, and encrypted input channels |
 
-The host is not required to run SSH, RDP, WinRM, a custom service, or an MCP
-server. Pairing creates a normal, separate GameStream client identity named
-`Moonlight MCP`.
+The connection is GameStream. The Windows host needs Apollo or Sunshine and its
+Desktop application; pairing creates a separate GameStream client identity
+named `Moonlight MCP`.
 
 ## Client-platform status
 
@@ -20,10 +20,10 @@ server. Pairing creates a normal, separate GameStream client identity named
 | macOS | Supported | Supported | Same verification; install Xcode Command Line Tools and Homebrew dependencies first |
 | Windows | Supported | Supported with `.exe` selection and atomic Windows frame replacement | Build with Visual Studio/CMake and FFmpeg/OpenSSL development packages, then perform a local smoke test |
 
-There are no prebuilt binaries in this project. A successful local build is the
-compatibility gate because FFmpeg/OpenSSL ABI details are platform- and
-package-manager-specific. `runtime_status` and `npm run doctor` report the
-bridge path and readiness on the actual invoker.
+There are no prebuilt binaries in this project. The installer builds the bridge
+locally because FFmpeg/OpenSSL ABI details vary by platform and package
+manager. `runtime_status` and `npm run doctor` report the bridge path and
+readiness on the actual invoker.
 
 ## Current protocol and media scope
 

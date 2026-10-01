@@ -1,30 +1,29 @@
 # Agent operating guide
 
-This MCP is a visual computer-use surface. Treat its Desktop screenshots as the
-source of truth and act only through its visual input tools.
+Treat the active Desktop stream as the source of truth. Read its screenshots,
+send input in their coordinate system, then inspect the rendered result.
 
 ## Required operating loop
 
 1. Call `runtime_status` when local readiness or version matters. For a new
    host, use `host_status`, complete pairing, and call `session_preflight`.
-2. Call `session_start` for the normal Desktop path. Do not call
-   `provider_app_start` unless the user explicitly asked for an
-   Apollo-registered provider app.
+2. Call `session_start` for the normal Desktop path. Use
+   `provider_app_start` only for a user-requested Apollo-registered provider
+   app.
 3. Call `screen_capture` and use that snapshot’s coordinate space. Locate a
    target by visible reasoning, `screen_find_text`, or a retained template.
-   Do not guess stale coordinates.
+   Do not reuse coordinates from an older frame.
 4. Send the smallest relevant visual input: prefer `session_mouse_click_at`,
    `session_key_press_named`, or `session_hotkey` over raw low-level events.
 5. Verify the expected visible effect. Use `session_wait_for_change` for
    material updates, a scoped region for animated screens, and
    `screen_wait_for_text` for dialogs, menus, and completion labels.
-6. Call `session_stop` after completion, failure, or ambiguity. Never leave a
-   stream open merely to save a future connection.
+6. Call `session_stop` after completion, failure, or ambiguity.
 
 ## Interpretation rules
 
-- “Open Valheim” means visually find and open it from the Desktop/Start menu;
-  it does not mean choose an Apollo provider app with a matching name.
+- “Open Valheim” means find and open it from the Desktop or Start menu. It is
+  not a request for an Apollo provider app with the same name.
 - “Increase volume by 10%” is ambiguous between Windows master volume and an
   application/game audio setting. Ask which target the user means before
   changing either.
@@ -43,9 +42,8 @@ the Apollo web URL. Do not ask for unrelated permissions, attempt to change
 them programmatically, or continue visual input when keyboard/mouse permission
 is absent.
 
-If the server reports that the streaming channel is already in use, report that
-condition and stop. Do not cancel, attach to, or disrupt the other client’s
-session.
+If the server reports that the streaming channel is already in use, report the
+condition and stop. That channel belongs to another client session.
 
 ## Authorization boundaries
 

@@ -24,6 +24,18 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm pack --dry-run
+      - if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path install.ps1), [ref]$tokens, [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
 
   native-linux:
     name: Native bridge (Ubuntu)
@@ -39,3 +51,11 @@ jobs:
       - run: npm run setup:native
       - run: npm run build:native
       - run: npm run doctor -- --strict
+      - name: Bootstrap install and update (Linux)
+        env:
+          MOONLIGHT_MCP_REPOSITORY: ${{ github.workspace }}
+          MOONLIGHT_MCP_INSTALL_DIR: ${{ runner.temp }}/moonlight-desktop-mcp-install
+          MOONLIGHT_MCP_CONFIGURE_CODEX: "0"
+        run: |
+          bash ./install.sh
+          bash ./install.sh
