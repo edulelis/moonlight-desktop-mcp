@@ -1,0 +1,49 @@
+{
+  "name": "moonlight-desktop-mcp",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "description": "Local, Desktop-first visual computer-use MCP for Apollo and Moonlight-compatible hosts",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "moonlight-desktop-mcp": "./src/index.js"
+  },
+  "files": [
+    "agents",
+    "docs",
+    "examples",
+    "native/CMakeLists.txt",
+    "native/session_bridge.c",
+    "scripts/build-native.js",
+    "scripts/build-native.sh",
+    "scripts/check-updates.js",
+    "scripts/doctor.js",
+    "scripts/install-codex-skill.js",
+    "scripts/migrate-state.js",
+    "scripts/setup-native.js",
+    "src",
+    "README.md",
+    "moonlight-core.lock.json"
+  ],
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test",
+    "check": "node --check src/index.js && node --check src/session.js && node --check src/paths.js && node --check src/ocr.js && node --check scripts/build-native.js && node --check scripts/setup-native.js && node --check scripts/doctor.js && node --check scripts/check-updates.js && node --check scripts/install-codex-skill.js && node --check scripts/migrate-state.js",
+    "check:updates": "node scripts/check-updates.js",
+    "inspect": "npx @modelcontextprotocol/inspector node src/index.js",
+    "doctor": "node scripts/doctor.js",
+    "setup:native": "node scripts/setup-native.js",
+    "build:native": "node scripts/build-native.js",
+    "install:codex-skill": "node scripts/install-codex-skill.js",
+    "migrate:state": "node scripts/migrate-state.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "fast-xml-parser": "^5.11.2",
+    "node-forge": "^1.4.0",
+    "tesseract.js": "^6.0.1",
+    "zod": "^4.6.5"
+  }
+}

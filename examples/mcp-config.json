@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "moonlight-desktop": {
+      "command": "/absolute/path/to/node",
+      "args": [
+        "/absolute/path/to/moonlight-desktop-mcp/src/index.js"
+      ],
+      "env": {
+        "MOONLIGHT_MCP_DATA_DIR": "/private/local/path/moonlight-desktop-mcp"
+      }
+    }
+  }
+}

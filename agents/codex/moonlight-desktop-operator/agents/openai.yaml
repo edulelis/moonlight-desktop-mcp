@@ -1,0 +1,11 @@
+interface:
+  display_name: "Moonlight Desktop Operator"
+  short_description: "Operate paired Windows desktops visually"
+  default_prompt: "Use $moonlight-desktop-operator to perform this authorized Windows desktop task visually."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "moonlight-desktop"
+      description: "Local Desktop-first Moonlight/Apollo computer-use MCP"
+policy:
+  allow_implicit_invocation: true
