@@ -5,7 +5,7 @@
 param(
   [string]$Ref = $(if ($env:MOONLIGHT_MCP_REF) { $env:MOONLIGHT_MCP_REF } else { "main" }),
   [string]$InstallDir = $(if ($env:MOONLIGHT_MCP_INSTALL_DIR) { $env:MOONLIGHT_MCP_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Moonlight Desktop MCP\\app" }),
-  [switch]$SkipCodexConfiguration
+  [switch]$SkipCodexConfiguration = ($env:MOONLIGHT_MCP_CONFIGURE_CODEX -eq "0")
 )
 
 $ErrorActionPreference = "Stop"

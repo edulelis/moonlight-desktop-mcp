@@ -1,5 +1,9 @@
 # Compatibility
 
+This is a technical platform-support reference. To install and run the MCP,
+use [Install and update](INSTALL.md); commands such as `npm run build:native`
+below apply only to an intentional [source checkout](DEVELOPMENT.md).
+
 ## Roles
 
 | Component | Supported role |
@@ -16,14 +20,14 @@ named `Moonlight MCP`.
 
 | Platform | JavaScript MCP | Native bridge source | Verification expectation |
 | --- | --- | --- | --- |
-| Linux | Supported | Supported | `npm run build:native`, `npm run doctor -- --strict`, then a Desktop visual smoke test |
-| macOS | Supported | Supported | Same verification; install Xcode Command Line Tools and Homebrew dependencies first |
-| Windows | Supported | Supported with `.exe` selection and atomic Windows frame replacement | Build with Visual Studio/CMake and FFmpeg/OpenSSL development packages, then perform a local smoke test |
+| Linux | Supported | Supported | Installer validates the bridge; source builds run `npm run build:native`, `npm run doctor -- --strict`, then a Desktop visual smoke test |
+| macOS | Supported | Supported | Same; source builds need Xcode Command Line Tools and Homebrew dependencies |
+| Windows | Supported | Supported with `.exe` selection and atomic Windows frame replacement | Installer uses WinGet/vcpkg; source builds use Visual Studio/CMake and FFmpeg/OpenSSL development packages |
 
 There are no prebuilt binaries in this project. The installer builds the bridge
 locally because FFmpeg/OpenSSL ABI details vary by platform and package
-manager. `runtime_status` and `npm run doctor` report the bridge path and
-readiness on the actual invoker.
+manager. `runtime_status` reports the bridge path and readiness for every
+installation; `npm run doctor` is the equivalent source-checkout command.
 
 ## Current protocol and media scope
 

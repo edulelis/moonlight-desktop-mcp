@@ -57,7 +57,8 @@ const report = {
   dependencyUpdates: dependencyUpdates(),
   recommendations: [
     "Review update output before changing files; this command never installs or updates anything.",
-    "For a source checkout: git pull --ff-only, npm ci, npm run setup:native, npm run build:native, then npm test.",
+    "For a normal managed installation, rerun the one-command installer in docs/INSTALL.md.",
+    "For an intentional source checkout, follow docs/DEVELOPMENT.md#update-a-source-checkout.",
     "Do not delete the MCP data directory during an update; it stores the paired client identity.",
   ],
 };
@@ -74,7 +75,8 @@ if (process.argv.includes("--json")) {
   }
   const updates = report.dependencyUpdates.checked ? Object.keys(report.dependencyUpdates.updates) : [];
   console.log(updates.length ? `Dependency updates: ${updates.join(", ")}` : "Dependency updates: none reported.");
-  console.log("Suggested update: git pull --ff-only && npm ci && npm run setup:native && npm run build:native && npm test");
+  console.log("Normal installation update: rerun the one-command installer in docs/INSTALL.md.");
+  console.log("Source checkout update: follow docs/DEVELOPMENT.md#update-a-source-checkout.");
 }
 
 // Keep the otherwise unused import check meaningful for packaged source

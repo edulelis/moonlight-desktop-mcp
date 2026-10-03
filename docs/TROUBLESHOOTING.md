@@ -2,13 +2,16 @@
 
 ## Start with local readiness
 
-```sh
-npm run doctor -- --json
-```
+Call `runtime_status` from the MCP client. It reports the installed version and
+whether `nativeBridgeReady` is `true` without contacting the Windows host.
+`npm run doctor -- --json` is the equivalent check only for an intentional
+source checkout.
 
-`nativeBridgeReady` must be `true` before `session_start` can work. If the core
-is missing, run `npm run setup:native`; if the bridge is missing, install the
-platform development libraries and run `npm run build:native`.
+`nativeBridgeReady` must be `true` before `session_start` can work. For a
+normal managed installation, rerun the one-command installer from
+[Install and update](INSTALL.md); it restores prerequisites and rebuilds the
+bridge. For an intentional source checkout, run the build steps in
+[Develop from source](DEVELOPMENT.md#clone-and-build).
 
 ## Pairing does not complete
 
@@ -44,6 +47,10 @@ its owner to do so, then retry. Do not call a cancellation endpoint to take it
 over; this MCP intentionally refuses that behavior.
 
 ## Native build fails
+
+For a normal managed installation, keep the failure output and use the
+one-command installer again after resolving the platform prerequisite it names.
+The details below apply when intentionally building from source.
 
 - Confirm `cmake --version`, `git --version`, and Node 20+.
 - On macOS, install Xcode Command Line Tools plus Homebrew FFmpeg/OpenSSL.

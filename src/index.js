@@ -134,8 +134,8 @@ server.registerTool("runtime_status", {
     node: process.version,
     dataDirectory: applicationDataDirectory(),
     nativeBridge: { ready: existsSync(bridgePath), path: bridgePath },
-    updateCheck: "Run npm run check:updates for dependency guidance, or npm run check:updates -- --remote from a Git checkout to compare it with its remote without changing the checkout.",
-    updateInstructions: "Review docs/INSTALL.md before applying an update; updates must rebuild the native bridge and retain local pairing data.",
+    updateCheck: "For a normal managed installation, rerun the one-command installer in docs/INSTALL.md. npm run check:updates is a source-maintenance check; add -- --remote only to compare an intentional Git checkout with its remote without changing it.",
+    updateInstructions: "Normal installations: follow docs/INSTALL.md and keep the local pairing-data directory. Intentional source checkouts: follow docs/DEVELOPMENT.md#update-a-source-checkout.",
   };
 }));
 

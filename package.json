@@ -1,6 +1,6 @@
 {
   "name": "moonlight-desktop-mcp",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "description": "Headless Moonlight/GameStream desktop MCP for Apollo and Sunshine",
