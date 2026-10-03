@@ -1,6 +1,6 @@
 {
   "name": "moonlight-desktop-mcp",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "Headless Moonlight/GameStream desktop MCP for Apollo and Sunshine",
@@ -32,7 +32,7 @@
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test",
-    "check": "node --check src/index.js && node --check src/session.js && node --check src/paths.js && node --check src/ocr.js && node --check scripts/build-native.js && node --check scripts/setup-native.js && node --check scripts/doctor.js && node --check scripts/check-updates.js && node --check scripts/install-codex-skill.js && node --check scripts/migrate-state.js",
+    "check": "node --check src/index.js && node --check src/session.js && node --check src/paths.js && node --check src/ocr.js && node --check src/wol.js && node --check scripts/build-native.js && node --check scripts/setup-native.js && node --check scripts/doctor.js && node --check scripts/check-updates.js && node --check scripts/install-codex-skill.js && node --check scripts/migrate-state.js",
     "check:updates": "node scripts/check-updates.js",
     "inspect": "npx @modelcontextprotocol/inspector node src/index.js",
     "doctor": "node scripts/doctor.js",

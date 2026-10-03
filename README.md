@@ -31,7 +31,7 @@ profile, frames, and OCR data stay local to that machine.
 
 | Need | Tools |
 | --- | --- |
-| Pair and inspect a host | `host_status`, `pairing_begin`, `pairing_status`, `profile_status` |
+| Pair, wake, and inspect a host | `host_status`, pairing tools, `profile_wol_configure`, `host_wake`, `profile_status` |
 | Check whether a session can start | `session_preflight`, `runtime_status` |
 | Start and stop a desktop | `session_start`, `session_status`, `session_stop` |
 | Read the screen | `screen_capture`, `screen_ocr`, `screen_find_text`, templates, crops, and diffs |
@@ -100,10 +100,13 @@ For PowerShell and generic MCP-client configuration, see
    `HOST:47989`.
 2. Call `pairing_begin`, open the returned Apollo URL, and enter the PIN.
 3. Wait for `pairing_status` to return a profile.
-4. Call `session_preflight` with `computer_use`. If Apollo reports missing
+4. Optionally call `profile_wol_configure` with the host MAC address and LAN
+   broadcast address. Later preflight/start calls wake this profile when the
+   PC is offline.
+5. Call `session_preflight` with `computer_use`. If Apollo reports missing
    permissions, change only the listed toggles in Apollo.
-5. Call `session_start`, then use capture → locate → input → verify.
-6. Call `session_stop` when the task is done or cannot be verified.
+6. Call `session_start`, then use capture → locate → input → verify.
+7. Call `session_stop` when the task is done or cannot be verified.
 
 If Apollo already has an active GameStream application, the MCP reports that
 condition and does not replace the other session.

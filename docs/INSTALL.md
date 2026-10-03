@@ -57,16 +57,16 @@ The commands above deliberately track the public `main` branch. Read the
 running it if that is your preferred workflow.
 
 To hold both the downloaded script and checkout to a released tag or commit,
-replace `v0.6.0` below with the version you chose:
+replace `v0.7.0` below with the version you chose:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.6.0/install.sh \
-  | MOONLIGHT_MCP_REF=v0.6.0 bash
+  https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.7.0/install.sh \
+  | MOONLIGHT_MCP_REF=v0.7.0 bash
 ```
 
 ```powershell
-$env:MOONLIGHT_MCP_REF = "v0.6.0"; irm https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.6.0/install.ps1 | iex
+$env:MOONLIGHT_MCP_REF = "v0.7.0"; irm https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.7.0/install.ps1 | iex
 ```
 
 For a separate checkout location, set `MOONLIGHT_MCP_INSTALL_DIR` before

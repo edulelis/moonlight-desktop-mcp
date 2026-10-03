@@ -19,6 +19,17 @@ platform development libraries and run `npm run build:native`.
 - Ensure the invoker can reach the host’s GameStream HTTP port (normally
   47989) and Apollo web UI port (normally 47990).
 
+## The PC is powered off or asleep
+
+Configure the paired profile once with `profile_wol_configure`, supplying the
+host's network-adapter MAC address and the IPv4 broadcast address of its LAN.
+`host_wake` sends the magic packet immediately; normal `session_preflight` and
+`session_start` also wake a configured host when Apollo is offline. If global
+`255.255.255.255` broadcast is filtered, use the subnet's broadcast address
+instead. Wake-on-LAN needs network hardware, firmware, and operating-system
+support on the host, and a route that carries the UDP broadcast from the MCP
+invoker.
+
 ## Apollo says permissions are missing
 
 Call `profile_status` or `session_preflight`. Follow only the named permission

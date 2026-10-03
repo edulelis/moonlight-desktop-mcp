@@ -11,8 +11,10 @@ marked read-only never launch an app or send remote input.
 | `host_status` | Public GameStream host information without pairing or input. |
 | `pairing_begin`, `pairing_status`, `pairing_cancel` | Dedicated Apollo PIN pairing lifecycle. |
 | `profiles_list` | Local paired identities without secret material. |
+| `profile_wol_configure` | Store a paired host's MAC address and Wake-on-LAN UDP broadcast settings locally. |
+| `host_wake` | Send a Wake-on-LAN magic packet for a configured paired host. |
 | `profile_status` | Authenticated Apollo permissions and decoded readiness. |
-| `session_preflight` | Exact permission check for the intended session mode. |
+| `session_preflight` | Exact permission check for the intended session mode; can wake a configured offline host. |
 | `apps_list` | Read Apollo provider apps; this does not launch them. |
 
 ## Sessions
@@ -23,6 +25,11 @@ marked read-only never launch an app or send remote input.
 | `provider_app_start` | Start an explicit Apollo provider app; not the normal Desktop path. |
 | `session_status` | Local transport/frame state. |
 | `session_stop` | Stop only the session owned by this MCP process. |
+
+`profiles_list[].id` is the `profile_id` for these tools. `session_start` and
+`provider_app_start` return a `sessionId`; use it as `session_id` for capture,
+input, status, and stop tools. If Wake-on-LAN is configured, normal preflight
+and start calls send magic packets only when the Apollo host does not answer.
 
 ## Visual observation
 

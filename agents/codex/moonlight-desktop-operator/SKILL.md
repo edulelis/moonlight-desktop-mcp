@@ -8,6 +8,17 @@ description: Operate a paired Apollo Windows desktop through the configured moon
 Use the `moonlight-desktop` MCP for authorized Windows GUI tasks on the paired
 Apollo host. The MCP runs on the invoker and sends video/input over compatible
 Moonlight/GameStream transport.
+It controls the remote desktop in the active session, not the invoker's local
+operating system. A paired profile alone is not proof that a remote desktop is
+ready for input: start a session and inspect a current screenshot first.
+
+Stop and let the user complete account sign-in, credential or one-time-code
+entry, license activation, and terms or EULA acceptance.
+
+If the target PC is offline, a profile with Wake-on-LAN settings wakes it during
+`session_preflight` or `session_start`. Configure it first with
+`profile_wol_configure` using a MAC address and LAN broadcast address supplied
+by the user or their Moonlight profile; do not guess those network values.
 
 ## Operating loop
 

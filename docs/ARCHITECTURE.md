@@ -11,6 +11,7 @@ image helpers run on the machine that invokes the MCP.
 ```text
 LLM / MCP client
   -> local Node MCP server
+     -> local UDP Wake-on-LAN packet (when the selected profile is configured and Apollo is offline)
      -> Apollo HTTPS/GameStream control plane (pair, permissions, launch)
      -> local native Moonlight bridge (H.264 decode + encrypted input)
      -> local vision helpers (PNG, OCR, template, diff)
@@ -55,6 +56,10 @@ what the user's request means and asks when the target materially changes.
   profiles are not imported or exposed.
 - Apollo permissions are read and decoded before launch. Missing permissions
   produce an actionable request instead of a hidden configuration change.
+- Wake-on-LAN configuration is stored with the local paired profile. The MCP
+  sends its UDP magic packet from the controlling machine before a configured
+  offline preflight or session start; it still waits for Apollo to become
+  reachable before attempting GameStream launch.
 - Before launch, the MCP checks `currentGame`. An existing stream produces a
   clear error and is never taken over or cancelled.
 - Session cleanup cancels only the Desktop app launched by the owning MCP

@@ -13,6 +13,10 @@ remote desktop.
 - `profiles.json` contains the dedicated client certificate and private key.
   It is written in the local MCP state directory with owner-only permissions
   where the platform supports POSIX modes.
+- A profile can also contain a Wake-on-LAN MAC address and UDP broadcast
+  destination. This is controller-side network configuration, not a remote
+  credential; keep it with the same local profile data rather than sharing it
+  in logs or chat unnecessarily.
 - On Windows, protection is supplied by the selected user-profile directory’s
   ACL. Keep `MOONLIGHT_MCP_DATA_DIR` private to the user running the MCP.
 - Per-session input keys are generated in memory, passed to the bridge via

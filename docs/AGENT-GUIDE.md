@@ -1,5 +1,20 @@
 # Agent operating guide
 
+## Connection semantics
+
+This MCP controls the remote desktop in its active streaming session. It does
+not control the invoker's local operating system. A paired profile identifies
+a possible target, but only a live session with a current screenshot confirms
+that input is directed to that target. Do not infer a usable remote desktop
+from a local application or process alone.
+
+Before interacting, select or create a paired profile, call
+`session_preflight`, and start a Desktop session. If the PC is offline and the
+profile has Wake-on-LAN configured, preflight/start wakes it and waits for
+Apollo. If the profile lacks that configuration, ask the user for the host MAC
+address and LAN broadcast address; do not guess either value. The screenshots
+and input tools for that session share one remote-desktop coordinate space.
+
 Treat the active Desktop stream as the source of truth. Read its screenshots,
 send input in their coordinate system, then inspect the rendered result.
 
@@ -51,6 +66,10 @@ Use normal visible UI close behavior; do not force-kill applications unless the
 user expressly asks. Ask for confirmation before a consequential final action:
 saving or overwriting files, deletion, submission, sending messages, purchases,
 credentials, system-security changes, or destructive account operations.
+
+Stop and let the user complete account sign-in, credential or one-time-code
+entry, license activation, and terms or EULA acceptance. Resume only after the
+user confirms that the required step is complete.
 
 The user may authorize ordinary navigation and reversible settings changes.
 Even then, verify through the rendered desktop rather than hidden system state.

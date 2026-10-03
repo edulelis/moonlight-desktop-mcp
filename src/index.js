@@ -15,6 +15,7 @@ import { ProfileStore } from "./store.js";
 import { cropRgb, diffRgb, findTemplate } from "./vision.js";
 import { recognizePng } from "./ocr.js";
 import { resolveHotkey, resolveVirtualKey } from "./keys.js";
+import { normalizeWakeOnLanConfiguration, sendWakeOnLan, wakeOnLanSummary } from "./wol.js";
 
 function json(value) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
@@ -79,11 +80,44 @@ function sleep(milliseconds) {
 const store = new ProfileStore();
 const pairing = new PairingManager(store);
 const sessions = new SessionManager();
+const WAKE_PROBE_TIMEOUT_MS = 2_500;
+const DEFAULT_WAKE_TIMEOUT_MS = 60_000;
+
+async function ensureHostReachable(profile, { wakeIfOffline = true, wakeTimeoutMs = DEFAULT_WAKE_TIMEOUT_MS } = {}) {
+  try {
+    await getServerInfo(profile.host, WAKE_PROBE_TIMEOUT_MS);
+    return { wakeOnLan: { attempted: false, ...wakeOnLanSummary(profile.wakeOnLan) } };
+  } catch (initialError) {
+    if (!wakeIfOffline) throw initialError;
+    if (!profile.wakeOnLan) {
+      throw new Error(`Apollo at ${profile.host.address}:${profile.host.port} did not respond. Wake-on-LAN is not configured for this profile; call profile_wol_configure with the host MAC address and broadcast address, or wake the PC another way. Original probe error: ${initialError.message}`);
+    }
+
+    const wake = await sendWakeOnLan(profile.wakeOnLan);
+    const deadline = Date.now() + wakeTimeoutMs;
+    let lastError = initialError;
+    while (Date.now() < deadline) {
+      await sleep(1_000);
+      try {
+        await getServerInfo(profile.host, WAKE_PROBE_TIMEOUT_MS);
+        return { wakeOnLan: { attempted: true, ...wakeOnLanSummary(wake) } };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw new Error(`Sent Wake-on-LAN to ${profile.host.address}:${profile.host.port}, but Apollo did not become reachable within ${Math.ceil(wakeTimeoutMs / 1_000)} seconds. Last probe error: ${lastError.message}`);
+  }
+}
+
 const server = new McpServer({
   name: "moonlight-desktop-mcp",
   version: packageInfo.version,
 }, {
-  instructions: "Local Apollo/Moonlight Desktop computer-use MCP. Use Desktop-first visual interaction: check session_preflight before launch; session_start controls only a new virtual Desktop and never takes over an existing stream. Capture before coordinate input, prefer OCR/template locations over guesses, verify every meaningful action visually, and session_stop when finished. Use provider_app_start only when the user explicitly requests an Apollo-registered provider app. Pairing returns a one-time PIN and Apollo Web UI URL; never expose local profile keys.",
+  instructions: [
+    "This MCP provides visual control of a paired remote desktop through a local streaming client. Before interaction, discover or reuse a paired profile, call session_preflight, and use session_start to open a new Desktop stream. Configure Wake-on-LAN with profile_wol_configure when the host must be powered on remotely; session_preflight and session_start can then wake an offline host. A live session with a current frame identifies the target and is required before input. Its screenshots and mouse or keyboard tools operate that remote Desktop, not the invoker's local OS.",
+    "Capture before coordinate input, use the current frame's coordinate space, prefer OCR or template locations over guesses, verify every meaningful action visually, and call session_stop when finished. session_start controls only a new virtual Desktop and never takes over an existing stream. Use provider_app_start only when the user explicitly requests an Apollo-registered provider app.",
+    "Pairing returns a one-time PIN and Apollo Web UI URL; never expose local profile keys. Stop and let the user complete account sign-in, credential or one-time-code entry, license activation, and terms or EULA acceptance.",
+  ].join(" "),
 });
 
 server.registerTool("runtime_status", {
@@ -156,17 +190,61 @@ server.registerTool("pairing_cancel", {
 
 server.registerTool("profiles_list", {
   title: "List local MCP identities",
-  description: "Lists local Moonlight MCP profiles without ever returning client certificates or private keys.",
+  description: "Lists local Moonlight MCP profiles without returning client certificates or private keys. Use a returned id as profile_id for profile, wake, preflight, and session tools.",
   annotations: { readOnlyHint: true, openWorldHint: false },
 }, safe(async () => ({
-  profiles: (await store.readAll()).map(({ id, deviceName, clientId, host, createdAt }) => ({
+  profiles: (await store.readAll()).map(({ id, deviceName, clientId, host, createdAt, wakeOnLan }) => ({
     id,
     deviceName,
     clientId,
     host: `${host.address}:${host.port}`,
     createdAt,
+    wakeOnLan: wakeOnLanSummary(wakeOnLan),
   })),
 })));
+
+server.registerTool("profile_wol_configure", {
+  title: "Configure Wake-on-LAN for a paired host",
+  description: "Stores the paired host's MAC address, IPv4 broadcast address, and UDP port locally. It does not send a magic packet. This enables host_wake and automatic wake attempts before session preflight/start when Apollo is offline.",
+  inputSchema: {
+    profile_id: z.string().min(1).describe("ID returned by profiles_list."),
+    mac_address: z.string().min(12).max(32).describe("Host network-adapter MAC address, for example 00:d8:61:50:bf:75."),
+    broadcast_address: z.string().min(7).max(15).default("255.255.255.255").describe("IPv4 subnet broadcast address. Use the host LAN broadcast when global broadcast is filtered."),
+    port: z.number().int().min(1).max(65_535).default(9).describe("UDP destination port for the magic packet."),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, safe(async ({ profile_id: profileId, mac_address: macAddress, broadcast_address: broadcastAddress, port }) => {
+  const profile = await store.find(profileId);
+  const wakeOnLan = normalizeWakeOnLanConfiguration({ macAddress, broadcastAddress, port });
+  await store.save({ ...profile, wakeOnLan });
+  return {
+    profileId,
+    wakeOnLan: wakeOnLanSummary(wakeOnLan),
+    instruction: "Wake-on-LAN is configured. Call host_wake to send a magic packet now, or use session_preflight/session_start with wake_if_offline enabled.",
+  };
+}));
+
+server.registerTool("host_wake", {
+  title: "Send a Wake-on-LAN magic packet",
+  description: "Sends Wake-on-LAN UDP magic packets from this MCP invoker using the selected profile's stored MAC and broadcast settings. It does not connect to Apollo, launch an app, or send desktop input. After waking, call session_preflight or session_start; those tools wait for Apollo when wake_if_offline is enabled.",
+  inputSchema: {
+    profile_id: z.string().min(1).describe("ID returned by profiles_list."),
+    attempts: z.number().int().min(1).max(10).default(3).describe("How many magic packets to send."),
+    interval_ms: z.number().int().min(0).max(10_000).default(250).describe("Delay between magic packets."),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, safe(async ({ profile_id: profileId, attempts, interval_ms: intervalMs }) => {
+  const profile = await store.find(profileId);
+  if (!profile.wakeOnLan) throw new Error(`Wake-on-LAN is not configured for profile '${profileId}'. Call profile_wol_configure with the host MAC address and broadcast address first.`);
+  const wakeOnLan = await sendWakeOnLan(profile.wakeOnLan, { attempts, intervalMs });
+  return {
+    profileId,
+    sent: true,
+    wakeOnLan: wakeOnLanSummary(wakeOnLan),
+    attempts: wakeOnLan.attempts,
+    instruction: "Magic packet sent. Wait for the PC to boot, then call session_preflight or session_start.",
+  };
+}));
 
 server.registerTool("apps_list", {
   title: "List Apollo apps",
@@ -203,19 +281,23 @@ server.registerTool("profile_status", {
 
 server.registerTool("session_preflight", {
   title: "Check session permissions",
-  description: "Checks whether Apollo granted exactly the permissions required for an intended future session. When anything is missing, returns a user-action request with the Apollo Web UI URL and only the missing toggles; it never changes host permissions itself.",
+  description: "Checks whether Apollo granted exactly the permissions required for an intended future session. Use mode computer_use for a normal Desktop session. If Apollo is offline and Wake-on-LAN is configured, wake_if_offline sends magic packets and waits for it to respond; otherwise this tool only reads Apollo state. When anything is missing, returns a user-action request with the Apollo Web UI URL and only the missing toggles.",
   inputSchema: {
-    profile_id: z.string().min(1),
-    mode: z.enum(Object.keys(ACCESS_MODES)).default("computer_use").describe("The planned session capability."),
+    profile_id: z.string().min(1).describe("ID returned by profiles_list."),
+    mode: z.enum(Object.keys(ACCESS_MODES)).default("computer_use").describe("Planned capability. Use computer_use for session_start or provider_app_start."),
+    wake_if_offline: z.boolean().default(true).describe("When configured, send Wake-on-LAN magic packets before reporting Apollo unavailable."),
+    wake_timeout_ms: z.number().int().min(5_000).max(120_000).default(DEFAULT_WAKE_TIMEOUT_MS).describe("Maximum time to wait for Apollo after an automatic wake."),
   },
-  annotations: { readOnlyHint: true, openWorldHint: false },
-}, safe(async ({ profile_id: profileId, mode }) => {
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, safe(async ({ profile_id: profileId, mode, wake_if_offline: wakeIfOffline, wake_timeout_ms: wakeTimeoutMs }) => {
   const profile = await store.find(profileId);
+  const reachability = await ensureHostReachable(profile, { wakeIfOffline, wakeTimeoutMs });
   const status = await getAuthenticatedHostStatus(profile);
   return {
     profileId,
     hostname: status.hostname,
     permissionMask: status.permission,
+    wakeOnLan: reachability.wakeOnLan,
     access: preflightAccess(status.permission, mode, {
       apolloWebUrl: hostUrls(profile.host).web,
       deviceName: profile.deviceName,
@@ -223,57 +305,66 @@ server.registerTool("session_preflight", {
   };
 }));
 
-async function startSession(profileId, { appId, appName, width, height, fps, bitrate }) {
+async function startSession(profileId, { appId, appName, width, height, fps, bitrate, wakeIfOffline, wakeTimeoutMs }) {
   const profile = await store.find(profileId);
+  const reachability = await ensureHostReachable(profile, { wakeIfOffline, wakeTimeoutMs });
   const status = await getAuthenticatedHostStatus(profile);
   const access = preflightAccess(status.permission, "computer_use", {
     apolloWebUrl: hostUrls(profile.host).web,
     deviceName: profile.deviceName,
   });
-  if (!access.ready) return { profileId, started: false, access };
-  return { started: true, ...(await sessions.start(profile, { appId, appName, width, height, fps, bitrate })) };
+  if (!access.ready) return { profileId, started: false, wakeOnLan: reachability.wakeOnLan, access };
+  return { started: true, wakeOnLan: reachability.wakeOnLan, ...(await sessions.start(profile, { appId, appName, width, height, fps, bitrate })) };
 }
 
 server.registerTool("session_start", {
   title: "Start a headless Desktop session",
-  description: "Launches Apollo's Desktop app and establishes a local Moonlight video/input session. This is the default and normal entry point for computer use: inspect the visible desktop, then click or type like a user would. It first checks required permissions and never takes over an existing running Apollo app.",
+  description: "Launches Apollo's Desktop app and establishes a local Moonlight video/input session. This is the default and normal entry point for computer use. If Apollo is offline and Wake-on-LAN is configured, it sends magic packets and waits before launching. The result's sessionId is required by capture, input, status, and stop tools. It checks required permissions and never takes over an existing running Apollo app.",
   inputSchema: {
-    profile_id: z.string().min(1),
+    profile_id: z.string().min(1).describe("ID returned by profiles_list."),
     width: z.number().int().min(320).max(3840).default(1280),
     height: z.number().int().min(240).max(2160).default(720),
     fps: z.number().int().min(10).max(60).default(30),
     bitrate_kbps: z.number().int().min(1_000).max(50_000).default(10_000),
+    wake_if_offline: z.boolean().default(true).describe("When configured, send Wake-on-LAN magic packets before reporting Apollo unavailable."),
+    wake_timeout_ms: z.number().int().min(5_000).max(120_000).default(DEFAULT_WAKE_TIMEOUT_MS).describe("Maximum time to wait for Apollo after an automatic wake."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-}, safe(({ profile_id: profileId, width, height, fps, bitrate_kbps: bitrate }) => startSession(profileId, {
+}, safe(({ profile_id: profileId, width, height, fps, bitrate_kbps: bitrate, wake_if_offline: wakeIfOffline, wake_timeout_ms: wakeTimeoutMs }) => startSession(profileId, {
   appId: DESKTOP_APP_ID,
   appName: "Desktop",
   width,
   height,
   fps,
   bitrate,
+  wakeIfOffline,
+  wakeTimeoutMs,
 })));
 
 server.registerTool("provider_app_start", {
   title: "Start a specific Apollo provider app",
-  description: "Explicit provider-app path. Use this only when the user expressly requests an Apollo/Moonlight registered app rather than visual Desktop computer use. It never takes over an existing running Apollo app.",
+  description: "Explicit provider-app path. Use this only when the user expressly requests an Apollo/Moonlight registered app rather than visual Desktop computer use. If configured, it can Wake-on-LAN before launch. The result's sessionId is required by capture, input, status, and stop tools. It never takes over an existing running Apollo app.",
   inputSchema: {
-    profile_id: z.string().min(1),
+    profile_id: z.string().min(1).describe("ID returned by profiles_list."),
     app_id: z.number().int().positive().describe("Explicit Apollo provider app ID."),
     app_name: z.string().min(1).max(128).describe("Name of the explicitly requested provider app."),
     width: z.number().int().min(320).max(3840).default(1280),
     height: z.number().int().min(240).max(2160).default(720),
     fps: z.number().int().min(10).max(60).default(30),
     bitrate_kbps: z.number().int().min(1_000).max(50_000).default(10_000),
+    wake_if_offline: z.boolean().default(true).describe("When configured, send Wake-on-LAN magic packets before reporting Apollo unavailable."),
+    wake_timeout_ms: z.number().int().min(5_000).max(120_000).default(DEFAULT_WAKE_TIMEOUT_MS).describe("Maximum time to wait for Apollo after an automatic wake."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-}, safe(({ profile_id: profileId, app_id: appId, app_name: appName, width, height, fps, bitrate_kbps: bitrate }) => startSession(profileId, {
+}, safe(({ profile_id: profileId, app_id: appId, app_name: appName, width, height, fps, bitrate_kbps: bitrate, wake_if_offline: wakeIfOffline, wake_timeout_ms: wakeTimeoutMs }) => startSession(profileId, {
   appId,
   appName,
   width,
   height,
   fps,
   bitrate,
+  wakeIfOffline,
+  wakeTimeoutMs,
 })));
 
 server.registerTool("session_status", {
