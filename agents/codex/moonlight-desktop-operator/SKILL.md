@@ -22,21 +22,30 @@ by the user or their Moonlight profile; do not guess those network values.
 
 ## Operating loop
 
-1. For setup/readiness concerns, call `runtime_status`; then call
+1. Call `desktop_channel_status` first. Confirm this dedicated headless
+   Desktop channel is ready, identify its paired target and any occupied local
+   transport or pending launch preparation, and follow `nextAction`. Never
+   start a second session while launch preparation is in progress. Refuse
+   generic GUI computer-use fallback because it would operate a local
+   controller window instead of the remote Desktop.
+2. For setup/readiness concerns, call `runtime_status`; then call
    `profiles_list` and `session_preflight` as appropriate. If pairing is
    required, `pairing_begin` returns the PIN and the Apollo web URL.
-2. Call `session_start` for the virtual **Desktop**. Use
+3. Call `session_start` for the virtual **Desktop**. Use
    `provider_app_start` only for an explicitly requested Apollo/Moonlight
    provider app.
-3. Call `screen_capture` and treat its `snapshotId` and dimensions as the
+4. Call `screen_capture` and treat its `snapshotId` and dimensions as the
    coordinate source for the next action. Locate targets through visible
    reasoning, `screen_find_text`, `screen_ocr`, or template matching.
-4. Send the smallest fitting input. Prefer `session_mouse_click_at`, named
+   Establish app availability, installer progress, account state, and license
+   state from that current capture rather than controller-local assumptions or
+   a provider-app registry.
+5. Send the smallest fitting input. Prefer `session_mouse_click_at`, named
    key presses, and named hotkeys to independent low-level events.
-5. Verify visibly. Use `session_wait_for_change` for material updates and a
+6. Verify visibly. Use `session_wait_for_change` for material updates and a
    focused region for animated apps. Use `screen_wait_for_text` for visible
    dialogs, menus, and completion notices.
-6. Call `session_stop` after success, failure, or ambiguity.
+7. Call `session_stop` after success, failure, or ambiguity.
 
 ## Boundaries
 

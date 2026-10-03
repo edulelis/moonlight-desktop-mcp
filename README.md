@@ -53,9 +53,12 @@ The normal computer-use loop is:
    returned Apollo URL → `pairing_status`.
 2. Optionally configure Wake-on-LAN with `profile_wol_configure` if the PC may
    be asleep or powered off.
-3. Before each task, call `session_preflight` and then `session_start`.
-4. Capture the Desktop, locate a visible target, input in that current frame's
-   coordinate space, and capture again to verify the result.
+3. Before each task, call `desktop_channel_status`, follow its `nextAction`,
+   then call `session_preflight` and `session_start` when the transport is
+   available and no launch preparation is in progress.
+4. Capture the Desktop, use that current frame to establish whether the
+   requested app or setup state is visibly available, locate a target, input in
+   that frame's coordinate space, and capture again to verify the result.
 5. Call `session_stop` when finished.
 
 `session_start` always opens the Desktop. An application need not be registered
@@ -80,10 +83,16 @@ agent guidance is in [docs/AGENT-GUIDE.md](docs/AGENT-GUIDE.md).
 
 - One Desktop stream at a time. If another GameStream client owns the channel,
   the MCP reports it and does not take it over.
+- Remote app availability, installer progress, account state, and license state
+  are established only through the current rendered Desktop, never through a
+  remote shell, registry, or process inspection.
 - Pairing keys, frames, OCR cache, and Wake-on-LAN settings stay on the
   controlling machine.
-- H.264 video is supported with 1280×720/30fps defaults. Audio, clipboard,
-  file transfer, HEVC/AV1, and session recovery are out of scope.
+- H.264 Desktop video defaults to 1920×1080/30fps at 20 Mbps. Pass
+  `stream_profile: "low_bandwidth"` to `session_start` for 1280×720/30fps at
+  8 Mbps on a slow connection; width, height, FPS, and bitrate remain optional
+  per-session overrides. Audio, clipboard, file transfer, HEVC/AV1, and session
+  recovery are out of scope.
 - Every meaningful action should be visually verified using a fresh capture.
 
 For compatibility, troubleshooting, architecture, and security details, see

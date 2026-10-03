@@ -17,23 +17,31 @@ and input tools for that session share one remote-desktop coordinate space.
 
 Treat the active Desktop stream as the source of truth. Read its screenshots,
 send input in their coordinate system, then inspect the rendered result.
+Do not infer whether an app is installed, an installer succeeded, or an account
+or license is available from controller-local state, provider-app registry
+entries, or prior notes. Establish each prerequisite through a current Desktop
+capture and visible UI.
 
 ## Required operating loop
 
-1. Call `runtime_status` when local readiness or version matters. For a new
+1. Call `desktop_channel_status` first and follow its `nextAction`. It exposes
+   locally owned transport occupancy and a pending launch preparation, so never
+   start a second session while it reports an active/stopping transport or a
+   launch in progress.
+2. Call `runtime_status` when local readiness or version matters. For a new
    host, use `host_status`, complete pairing, and call `session_preflight`.
-2. Call `session_start` for the normal Desktop path. Use
+3. Call `session_start` for the normal Desktop path. Use
    `provider_app_start` only for a user-requested Apollo-registered provider
    app.
-3. Call `screen_capture` and use that snapshot’s coordinate space. Locate a
+4. Call `screen_capture` and use that snapshot’s coordinate space. Locate a
    target by visible reasoning, `screen_find_text`, or a retained template.
    Do not reuse coordinates from an older frame.
-4. Send the smallest relevant visual input: prefer `session_mouse_click_at`,
+5. Send the smallest relevant visual input: prefer `session_mouse_click_at`,
    `session_key_press_named`, or `session_hotkey` over raw low-level events.
-5. Verify the expected visible effect. Use `session_wait_for_change` for
+6. Verify the expected visible effect. Use `session_wait_for_change` for
    material updates, a scoped region for animated screens, and
    `screen_wait_for_text` for dialogs, menus, and completion labels.
-6. Call `session_stop` after completion, failure, or ambiguity.
+7. Call `session_stop` after completion, failure, or ambiguity.
 
 ## Interpretation rules
 
@@ -47,6 +55,9 @@ send input in their coordinate system, then inspect the rendered result.
   screen animates.
 - A negative OCR/template result is not evidence that the target is absent.
   Re-capture, broaden the search region, or report the limitation.
+- To establish whether a requested application is available, use normal visible
+  Desktop search/navigation and capture the result. Never treat an absent
+  provider-app registration or a controller-local assumption as proof.
 - Do not respond with success until a suitable visible check confirms it, or
   explain precisely what could not be confirmed.
 

@@ -9,7 +9,7 @@ import packageInfo from "../package.json" with { type: "json" };
 import { getServerInfo, hostUrls, normalizeHost } from "./host.js";
 import { getAuthenticatedHostStatus, listApps, PairingManager } from "./pairing.js";
 import { ACCESS_MODES, decodePermissions, preflightAccess } from "./permissions.js";
-import { DESKTOP_APP_ID, SessionManager, rgbToPng } from "./session.js";
+import { DESKTOP_APP_ID, HEADLESS_DESKTOP_CHANNEL, SessionManager, desktopChannelNextAction, desktopStreamSettings, isDesktopSession, rgbToPng, sessionTarget, transportSessionView } from "./session.js";
 import { applicationDataDirectory, defaultBridgePath } from "./paths.js";
 import { ProfileStore } from "./store.js";
 import { cropRgb, diffRgb, findTemplate } from "./vision.js";
@@ -114,7 +114,7 @@ const server = new McpServer({
   version: packageInfo.version,
 }, {
   instructions: [
-    "This MCP provides visual control of a paired remote desktop through a local streaming client. Before interaction, discover or reuse a paired profile, call session_preflight, and use session_start to open a new Desktop stream. Configure Wake-on-LAN with profile_wol_configure when the host must be powered on remotely; session_preflight and session_start can then wake an offline host. A live session with a current frame identifies the target and is required before input. Its screenshots and mouse or keyboard tools operate that remote Desktop, not the invoker's local OS.",
+    "This MCP is the dedicated headless Moonlight remote-desktop channel. When a paired remote Desktop is expected, first call desktop_channel_status, then select this MCP's session, capture, and input tools; do not fall back to generic GUI computer use, which would operate a local Moonlight window rather than the remote Desktop. Its screenshots and input operate the remote Desktop, not the invoker's local OS. Before interaction, discover or reuse a paired profile, call session_preflight, and use session_start to open a new Desktop stream. Configure Wake-on-LAN with profile_wol_configure when the host must be powered on remotely; session_preflight and session_start can then wake an offline host. A live session with a current frame identifies the target and is required before input. Use that current capture, not controller-local assumptions, to establish whether a requested app, installer, account, or license step is visibly available.",
     "Capture before coordinate input, use the current frame's coordinate space, prefer OCR or template locations over guesses, verify every meaningful action visually, and call session_stop when finished. session_start controls only a new virtual Desktop and never takes over an existing stream. Use provider_app_start only when the user explicitly requests an Apollo-registered provider app.",
     "Pairing returns a one-time PIN and Apollo Web UI URL; never expose local profile keys. Stop and let the user complete account sign-in, credential or one-time-code entry, license activation, and terms or EULA acceptance.",
   ].join(" "),
@@ -136,6 +136,49 @@ server.registerTool("runtime_status", {
     nativeBridge: { ready: existsSync(bridgePath), path: bridgePath },
     updateCheck: "For a normal managed installation, rerun the one-command installer in docs/INSTALL.md. npm run check:updates is a source-maintenance check; add -- --remote only to compare an intentional Git checkout with its remote without changing it.",
     updateInstructions: "Normal installations: follow docs/INSTALL.md and keep the local pairing-data directory. Intentional source checkouts: follow docs/DEVELOPMENT.md#update-a-source-checkout.",
+  };
+}));
+
+server.registerTool("desktop_channel_status", {
+  title: "Inspect the dedicated headless remote Desktop channel",
+  description: "Use this first when a task expects a paired remote Desktop. It reports configured remote targets, active Desktop sessions, every locally owned Moonlight transport that blocks another Desktop session, and a pending local launch preparation, without contacting a host or sending input. Select this channel's session, capture, and input tools instead of generic GUI computer use; generic GUI control of a local Moonlight window is not a fallback for this dedicated remote-desktop channel.",
+  annotations: { readOnlyHint: true, openWorldHint: false },
+}, safe(async () => {
+  const pairedTargets = (await store.readAll()).map((profile) => ({
+    ...sessionTarget(profile),
+    createdAt: profile.createdAt,
+    wakeOnLan: wakeOnLanSummary(profile.wakeOnLan),
+  }));
+  const activeTransportSessions = sessions.list().filter((session) =>
+    ["launching", "starting", "active", "stopping"].includes(session.state));
+  const desktopSessions = activeTransportSessions.filter((session) =>
+    isDesktopSession(session));
+  const transportSessions = activeTransportSessions.map(transportSessionView);
+  const nativeBridgeReady = existsSync(defaultBridgePath());
+  return {
+    channel: {
+      ...HEADLESS_DESKTOP_CHANNEL,
+      selection: "desktop_channel_status -> session_preflight -> session_start -> screen_capture -> session input tools",
+      genericGuiComputerUseFallback: "refuse",
+      fallbackReason: "Generic GUI computer use acts on a controller window, not on this MCP's dedicated remote Desktop stream.",
+    },
+    pairedTargets,
+    activeSessions: desktopSessions,
+    transportSessions,
+    readiness: {
+      nativeBridgeReady,
+      pairedTargetCount: pairedTargets.length,
+      activeSessionCount: desktopSessions.length,
+      activeTransportSessionCount: transportSessions.length,
+      launchPreparationInProgress: sessions.hasStartReservation(),
+    },
+    nextAction: desktopChannelNextAction({
+      nativeBridgeReady,
+      pairedTargetCount: pairedTargets.length,
+      desktopSessions,
+      transportSessions,
+      launchPreparationInProgress: sessions.hasStartReservation(),
+    }),
   };
 }));
 
@@ -319,24 +362,22 @@ async function startSession(profileId, { appId, appName, width, height, fps, bit
 
 server.registerTool("session_start", {
   title: "Start a headless Desktop session",
-  description: "Launches Apollo's Desktop app and establishes a local Moonlight video/input session. This is the default and normal entry point for computer use. If Apollo is offline and Wake-on-LAN is configured, it sends magic packets and waits before launching. The result's sessionId is required by capture, input, status, and stop tools. It checks required permissions and never takes over an existing running Apollo app.",
+  description: "Launches Apollo's Desktop app and establishes a local Moonlight video/input session. This is the default and normal entry point for computer use. The full_hd stream profile defaults to 1920x1080 at 30fps and 20 Mbps; select low_bandwidth for 1280x720 at 30fps and 8 Mbps when the connection is slow, then optionally override individual stream settings. If Apollo is offline and Wake-on-LAN is configured, it sends magic packets and waits before launching. The result's sessionId is required by capture, input, status, and stop tools. It checks required permissions and never takes over an existing running Apollo app.",
   inputSchema: {
     profile_id: z.string().min(1).describe("ID returned by profiles_list."),
-    width: z.number().int().min(320).max(3840).default(1280),
-    height: z.number().int().min(240).max(2160).default(720),
-    fps: z.number().int().min(10).max(60).default(30),
-    bitrate_kbps: z.number().int().min(1_000).max(50_000).default(10_000),
+    stream_profile: z.enum(["full_hd", "low_bandwidth"]).default("full_hd").describe("full_hd uses 1920x1080 at 30fps and 20 Mbps. low_bandwidth uses 1280x720 at 30fps and 8 Mbps for constrained connections."),
+    width: z.number().int().min(320).max(3840).optional().describe("Optional override for the selected Desktop stream profile width."),
+    height: z.number().int().min(240).max(2160).optional().describe("Optional override for the selected Desktop stream profile height."),
+    fps: z.number().int().min(10).max(60).optional().describe("Optional override for the selected Desktop stream profile frame rate."),
+    bitrate_kbps: z.number().int().min(1_000).max(50_000).optional().describe("Optional override for the selected Desktop stream profile bitrate."),
     wake_if_offline: z.boolean().default(true).describe("When configured, send Wake-on-LAN magic packets before reporting Apollo unavailable."),
     wake_timeout_ms: z.number().int().min(5_000).max(120_000).default(DEFAULT_WAKE_TIMEOUT_MS).describe("Maximum time to wait for Apollo after an automatic wake."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-}, safe(({ profile_id: profileId, width, height, fps, bitrate_kbps: bitrate, wake_if_offline: wakeIfOffline, wake_timeout_ms: wakeTimeoutMs }) => startSession(profileId, {
+}, safe(({ profile_id: profileId, stream_profile: streamProfile, width, height, fps, bitrate_kbps: bitrate, wake_if_offline: wakeIfOffline, wake_timeout_ms: wakeTimeoutMs }) => startSession(profileId, {
   appId: DESKTOP_APP_ID,
   appName: "Desktop",
-  width,
-  height,
-  fps,
-  bitrate,
+  ...desktopStreamSettings({ streamProfile, width, height, fps, bitrate }),
   wakeIfOffline,
   wakeTimeoutMs,
 })));

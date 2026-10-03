@@ -12,10 +12,100 @@ import { cropRgb, diffRgb } from "./vision.js";
 
 export const DESKTOP_APP_ID = 881448767;
 
+export const DESKTOP_STREAM_PROFILES = Object.freeze({
+  full_hd: Object.freeze({ width: 1920, height: 1080, fps: 30, bitrate: 20_000 }),
+  low_bandwidth: Object.freeze({ width: 1280, height: 720, fps: 30, bitrate: 8_000 }),
+});
+
+export function desktopStreamSettings({ streamProfile = "full_hd", width, height, fps, bitrate } = {}) {
+  const profile = DESKTOP_STREAM_PROFILES[streamProfile];
+  if (!profile) throw new Error(`Unknown Desktop stream profile '${streamProfile}'.`);
+  return {
+    width: width ?? profile.width,
+    height: height ?? profile.height,
+    fps: fps ?? profile.fps,
+    bitrate: bitrate ?? profile.bitrate,
+  };
+}
+
+export const HEADLESS_DESKTOP_CHANNEL = Object.freeze({
+  id: "moonlight-desktop",
+  kind: "headless_moonlight_desktop",
+  transport: "moonlight_gamestream",
+  inputTarget: "remote_desktop",
+  localGuiFallback: "refuse",
+});
+
+export const HEADLESS_PROVIDER_APP_CHANNEL = Object.freeze({
+  id: "moonlight-provider-app",
+  kind: "headless_moonlight_provider_app",
+  transport: "moonlight_gamestream",
+  inputTarget: "remote_provider_app",
+  localGuiFallback: "refuse",
+});
+
 const sessionRoot = path.join(applicationDataDirectory(), "sessions");
 
-function sessionView(session) {
+export function sessionTarget(profile) {
   return {
+    profileId: profile.id,
+    deviceName: profile.deviceName,
+    host: {
+      address: profile.host.address,
+      port: profile.host.port,
+    },
+  };
+}
+
+export function isDesktopSession(session) {
+  return session.appId === DESKTOP_APP_ID;
+}
+
+export function transportSessionView(session) {
+  const view = sessionView(session);
+  return {
+    sessionId: view.sessionId,
+    state: view.state,
+    channel: view.channel,
+  };
+}
+
+export function desktopChannelNextAction({
+  nativeBridgeReady,
+  pairedTargetCount,
+  desktopSessions,
+  transportSessions = [],
+  launchPreparationInProgress = false,
+}) {
+  if (!nativeBridgeReady) {
+    return "The dedicated headless remote Desktop channel is unavailable because its native Moonlight bridge is not ready. Repair this MCP's local bridge before starting a session; do not fall back to generic GUI computer use.";
+  }
+  const occupiedSessions = transportSessions.length > 0 ? transportSessions : desktopSessions;
+  const stoppingSession = occupiedSessions.find((session) => session.state === "stopping");
+  if (stoppingSession) {
+    return `Moonlight transport session ${stoppingSession.sessionId} is stopping. Wait for it to end, then call desktop_channel_status again before preflighting or starting a Desktop session.`;
+  }
+  const nonDesktopSession = occupiedSessions.find((session) => session.channel.id !== HEADLESS_DESKTOP_CHANNEL.id);
+  if (nonDesktopSession) {
+    return `The Moonlight transport is occupied by this MCP's ${nonDesktopSession.channel.kind} session ${nonDesktopSession.sessionId} (${nonDesktopSession.state}). Call session_status with that sessionId; do not start another Desktop session. Stop it only if it is the owned session the user asked to end.`;
+  }
+  const activeSession = desktopSessions.find((session) => session.state === "active");
+  if (activeSession) return "Call screen_capture with the active Desktop sessionId.";
+  if (launchPreparationInProgress) {
+    return "A Moonlight transport launch is already being prepared by this MCP. Wait for that session_start call to return or fail, then call desktop_channel_status again before starting another Desktop session.";
+  }
+  if (occupiedSessions.length > 0) {
+    const session = occupiedSessions[0];
+    return `The Moonlight transport is occupied by this MCP's ${session.channel.kind} session ${session.sessionId} (${session.state}). Call session_status with that sessionId; do not start another Desktop session. Stop it only if it is the owned session the user asked to end.`;
+  }
+  if (pairedTargetCount > 0) return "Call session_preflight with a paired profileId.";
+  return "Call pairing_begin to create a dedicated paired target.";
+}
+
+export function sessionView(session) {
+  return {
+    channel: isDesktopSession(session) ? HEADLESS_DESKTOP_CHANNEL : HEADLESS_PROVIDER_APP_CHANNEL,
+    target: sessionTarget(session.profile),
     sessionId: session.id,
     profileId: session.profileId,
     appId: session.appId,
@@ -24,6 +114,7 @@ function sessionView(session) {
     width: session.width,
     height: session.height,
     fps: session.fps,
+    bitrateKbps: session.bitrate,
     frameSequence: session.frameSequence,
     frameCapturedAt: session.frameCapturedAt,
     lastEvent: session.lastEvent,
@@ -146,6 +237,7 @@ export class SessionManager extends EventEmitter {
     this.bridgePath = bridgePath;
     this.rootDirectory = rootDirectory;
     this.sessions = new Map();
+    this.startReservation = null;
   }
 
   find(sessionId) {
@@ -158,94 +250,113 @@ export class SessionManager extends EventEmitter {
     return sessionView(this.find(sessionId));
   }
 
-  async start(profile, { appId = DESKTOP_APP_ID, appName = "Desktop", width = 1280, height = 720, fps = 30, bitrate = 10_000 } = {}) {
-    if ([...this.sessions.values()].some((session) => session.state === "starting" || session.state === "active")) {
-      throw new Error("Only one Moonlight transport session may be active at a time.");
-    }
-    await fs.access(this.bridgePath);
-    const serverInfo = await getServerInfo(profile.host);
-    if (serverInfo.currentGame !== 0) {
-      let appName;
-      try {
-        appName = (await listApps(profile)).find((app) => app.id === serverInfo.currentGame)?.name;
-      } catch {
-        // The channel warning remains useful even if app discovery is unavailable.
-      }
-      throw new Error(`Moonlight streaming channel is already in use by ${appName ?? `app ID ${serverInfo.currentGame}`}. This MCP will not take over an existing session; attach/recovery support is not implemented yet.`);
-    }
+  list() {
+    return [...this.sessions.values()].map((session) => sessionView(session));
+  }
 
-    const id = randomBytes(12).toString("hex");
-    const directory = path.join(this.rootDirectory, id);
-    const framePath = path.join(directory, "latest.ppm");
-    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-    await fs.chmod(directory, 0o700);
+  hasStartReservation() {
+    return this.startReservation !== null;
+  }
 
-    const inputKey = randomBytes(16);
-    const inputIv = Buffer.alloc(16);
-    randomBytes(4).copy(inputIv);
-    const session = {
-      id,
-      profile,
-      profileId: profile.id,
-      appId,
-      appName,
-      width,
-      height,
-      fps,
-      bitrate,
-      directory,
-      framePath,
-      state: "launching",
-      frameSequence: 0,
-      frameCapturedAt: null,
-      visualBaselineStable: null,
-      lastEvent: appId === DESKTOP_APP_ID ? "launching_desktop" : "launching_provider_app",
-      waiters: [],
-      child: null,
-      launched: false,
-      stopping: false,
-      stopPromise: null,
-      unexpectedCleanupPromise: null,
-      snapshots: new Map(),
-      snapshotOrder: [],
-      latestSnapshotId: null,
-      templates: new Map(),
-    };
-    this.sessions.set(id, session);
+  async start(profile, { appId = DESKTOP_APP_ID, appName = "Desktop", width = DESKTOP_STREAM_PROFILES.full_hd.width, height = DESKTOP_STREAM_PROFILES.full_hd.height, fps = DESKTOP_STREAM_PROFILES.full_hd.fps, bitrate = DESKTOP_STREAM_PROFILES.full_hd.bitrate } = {}) {
+    const occupiedSession = [...this.sessions.values()].find((session) =>
+      ["launching", "starting", "active", "stopping"].includes(session.state));
+    if (occupiedSession) {
+      throw new Error(`Moonlight transport session '${occupiedSession.id}' is ${occupiedSession.state}. Wait for it to end before starting another session.`);
+    }
+    if (this.startReservation) {
+      throw new Error("A Moonlight transport launch is already being prepared. Wait for it to return or fail before starting another session.");
+    }
+    this.startReservation = { startedAt: Date.now() };
 
     try {
-      let launch;
-      for (let attempt = 0; attempt < 3; attempt++) {
+      await fs.access(this.bridgePath);
+      const serverInfo = await getServerInfo(profile.host);
+      if (serverInfo.currentGame !== 0) {
+        let appName;
         try {
-          launch = await launchApp(profile, { appId, width, height, fps, inputKey, inputIv });
-          break;
-        } catch (error) {
-          if (!isTransientCaptureStartError(error) || attempt === 2) throw error;
-          // Apollo can report this briefly after a prior stream ends while its
-          // capture pipeline is still being released. The channel remains
-          // free, so retrying this one host response is safe and useful.
-          session.lastEvent = `retrying_video_capture_${attempt + 1}`;
-          await delay(750 * (attempt + 1));
+          appName = (await listApps(profile)).find((app) => app.id === serverInfo.currentGame)?.name;
+        } catch {
+          // The channel warning remains useful even if app discovery is unavailable.
         }
+        throw new Error(`Moonlight streaming channel is already in use by ${appName ?? `app ID ${serverInfo.currentGame}`}. This MCP will not take over an existing session; attach/recovery support is not implemented yet.`);
       }
-      session.launched = true;
-      session.state = "starting";
-      session.lastEvent = "starting_native_transport";
-      await this.startBridge(session, { serverInfo, rtspSessionUrl: launch.rtspSessionUrl, inputKey, inputIv });
-      await this.waitFor(session, (event) => event.type === "connected" || event.type === "stage_failed" || event.type === "connection_error" || event.type === "exit", 25_000);
-      if (session.state !== "active") throw new Error(`Moonlight transport did not connect (${session.lastEvent}).`);
-      // Apollo can publish several transitional frames while its Desktop
-      // capture surface comes up. A frame count alone is not reliable, so
-      // attempt to establish two consecutive quiet frames before returning;
-      // continuously animated Desktops remain usable and are marked as such.
-      await this.waitForVisualBaseline(session);
-      return sessionView(session);
-    } catch (error) {
-      await this.stop(id, { cancelRemote: true, keepRecord: true }).catch(() => {});
-      throw error;
+
+      const id = randomBytes(12).toString("hex");
+      const directory = path.join(this.rootDirectory, id);
+      const framePath = path.join(directory, "latest.ppm");
+      await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+      await fs.chmod(directory, 0o700);
+
+      const inputKey = randomBytes(16);
+      const inputIv = Buffer.alloc(16);
+      randomBytes(4).copy(inputIv);
+      const session = {
+        id,
+        profile,
+        profileId: profile.id,
+        appId,
+        appName,
+        width,
+        height,
+        fps,
+        bitrate,
+        directory,
+        framePath,
+        state: "launching",
+        frameSequence: 0,
+        frameCapturedAt: null,
+        visualBaselineStable: null,
+        lastEvent: appId === DESKTOP_APP_ID ? "launching_desktop" : "launching_provider_app",
+        waiters: [],
+        child: null,
+        launched: false,
+        stopping: false,
+        stopPromise: null,
+        unexpectedCleanupPromise: null,
+        snapshots: new Map(),
+        snapshotOrder: [],
+        latestSnapshotId: null,
+        templates: new Map(),
+      };
+      this.sessions.set(id, session);
+
+      try {
+        let launch;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            launch = await launchApp(profile, { appId, width, height, fps, inputKey, inputIv });
+            break;
+          } catch (error) {
+            if (!isTransientCaptureStartError(error) || attempt === 2) throw error;
+            // Apollo can report this briefly after a prior stream ends while its
+            // capture pipeline is still being released. The channel remains
+            // free, so retrying this one host response is safe and useful.
+            session.lastEvent = `retrying_video_capture_${attempt + 1}`;
+            await delay(750 * (attempt + 1));
+          }
+        }
+        session.launched = true;
+        session.state = "starting";
+        session.lastEvent = "starting_native_transport";
+        await this.startBridge(session, { serverInfo, rtspSessionUrl: launch.rtspSessionUrl, inputKey, inputIv });
+        await this.waitFor(session, (event) => event.type === "connected" || event.type === "stage_failed" || event.type === "connection_error" || event.type === "exit", 25_000);
+        if (session.state !== "active") throw new Error(`Moonlight transport did not connect (${session.lastEvent}).`);
+        // Apollo can publish several transitional frames while its Desktop
+        // capture surface comes up. A frame count alone is not reliable, so
+        // attempt to establish two consecutive quiet frames before returning;
+        // continuously animated Desktops remain usable and are marked as such.
+        await this.waitForVisualBaseline(session);
+        return sessionView(session);
+      } catch (error) {
+        await this.stop(id, { cancelRemote: true, keepRecord: true }).catch(() => {});
+        throw error;
+      } finally {
+        inputKey.fill(0);
+        inputIv.fill(0);
+      }
     } finally {
-      inputKey.fill(0);
-      inputIv.fill(0);
+      this.startReservation = null;
     }
   }
 

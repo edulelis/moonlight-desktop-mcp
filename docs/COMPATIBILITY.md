@@ -31,9 +31,11 @@ installation; `npm run doctor` is the equivalent source-checkout command.
 
 ## Current protocol and media scope
 
-- H.264 only, at up to 1280×720/30fps by default; session inputs may request
-  up to 3840×2160/60fps within the tool schema, but practical host/network
-  performance must be verified.
+- H.264 only. Desktop sessions default to the `full_hd` profile
+  (1920×1080/30fps at 20 Mbps); choose `low_bandwidth` for
+  1280×720/30fps at 8 Mbps when the connection is constrained. Individual
+  session inputs may still request up to 3840×2160/60fps and 50 Mbps within the
+  tool schema, but practical host/network performance must be verified.
 - Video is decoded locally through FFmpeg and emitted to the MCP as PNG
   screenshots. Audio is intentionally not decoded or exposed.
 - One active local stream at a time. Existing GameStream sessions are detected

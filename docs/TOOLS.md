@@ -7,6 +7,7 @@ marked read-only never launch an app or send remote input.
 
 | Tool | Purpose |
 | --- | --- |
+| `desktop_channel_status` | Identify the dedicated headless Desktop channel, paired targets, active Desktop sessions, local transport occupancy, and bridge readiness. Start here; generic GUI computer use is not a fallback. |
 | `runtime_status` | Installed version, local platform, data path, native bridge readiness, and update path. |
 | `host_status` | Public GameStream host information without pairing or input. |
 | `pairing_begin`, `pairing_status`, `pairing_cancel` | Dedicated Apollo PIN pairing lifecycle. |
@@ -30,6 +31,15 @@ marked read-only never launch an app or send remote input.
 `provider_app_start` return a `sessionId`; use it as `session_id` for capture,
 input, status, and stop tools. If Wake-on-LAN is configured, normal preflight
 and start calls send magic packets only when the Apollo host does not answer.
+`desktop_channel_status.activeSessions` contains only Desktop sessions; an
+explicit provider-app stream is never mislabeled as a Desktop target.
+`transportSessions` reports every local MCP-owned transport that prevents a
+second Desktop launch, without exposing provider-app names.
+`readiness.launchPreparationInProgress` covers the short pre-session interval
+while this MCP is checking and reserving the Moonlight transport; it has no
+session ID yet, so wait for `session_start` to return or fail before retrying.
+If `activeSessions` already contains a Desktop session, capture that session as
+the source of truth and still do not start another one.
 
 ## Visual observation
 

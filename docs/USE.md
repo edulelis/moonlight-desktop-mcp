@@ -50,23 +50,37 @@ after Apollo becomes reachable.
 Use the following loop for requests such as “open Valheim”, “close Steam
 normally”, or “change a visible Windows setting.”
 
-1. Call `session_preflight` with the chosen `profile_id` and
+1. Call `desktop_channel_status` to confirm that this dedicated headless
+   Desktop channel is ready, select its paired target, and check whether a
+   Desktop session or another MCP-owned Moonlight transport is already active,
+   stopping, or being prepared. Follow `nextAction` rather than starting
+   another session. Do
+   not fall back to generic GUI computer use: it would control a local
+   controller window instead of the remote Desktop.
+2. Call `session_preflight` with the chosen `profile_id` and
    `mode: "computer_use"`. It checks only the permissions required for visual
    computer use. If it reports missing permissions, use its returned Apollo URL
    and change only the named toggles, then preflight again.
-2. Call `session_start` with the same `profile_id`. This opens Apollo's
+3. Call `session_start` with the same `profile_id`. This opens Apollo's
    **Desktop**, not a provider app. If another GameStream client owns the
    streaming channel, the MCP reports that state and does not take it over.
-3. Save the returned `sessionId`. Call `screen_capture` with it and use the
+   It defaults to the `full_hd` profile (1920×1080/30fps at 20 Mbps). If the
+   connection is slow, pass `stream_profile: "low_bandwidth"` for
+   1280×720/30fps at 8 Mbps; individual video settings can still override that
+   profile.
+4. Save the returned `sessionId`. Call `screen_capture` with it and use the
    returned image and dimensions as the coordinate source for the next action.
-4. Find the visible target: reason from the fresh screenshot, use
+   A current capture is the only evidence that a requested app, installer,
+   account, license, or activation state is present; do not infer those facts
+   from controller-local state or a provider-app registry.
+5. Find the visible target: reason from the fresh screenshot, use
    `screen_find_text`/`screen_ocr`, or create and use a template. Send the
    smallest appropriate input, usually `session_mouse_click_at`, a named key,
    or `session_hotkey`.
-5. Capture again or wait with `session_wait_for_change` or
+6. Capture again or wait with `session_wait_for_change` or
    `screen_wait_for_text`. Report success only after the rendered Desktop shows
    the expected result.
-6. Call `session_stop` with the same `session_id` when the task is complete,
+7. Call `session_stop` with the same `session_id` when the task is complete,
    cannot be verified, or becomes ambiguous.
 
 Snapshots and input share one remote-desktop coordinate space. Do not reuse
