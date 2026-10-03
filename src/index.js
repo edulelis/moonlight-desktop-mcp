@@ -9,7 +9,7 @@ import packageInfo from "../package.json" with { type: "json" };
 import { getServerInfo, hostUrls, normalizeHost } from "./host.js";
 import { getAuthenticatedHostStatus, listApps, PairingManager } from "./pairing.js";
 import { ACCESS_MODES, decodePermissions, preflightAccess } from "./permissions.js";
-import { DESKTOP_APP_ID, HEADLESS_DESKTOP_CHANNEL, SessionManager, desktopChannelNextAction, desktopStreamSettings, isDesktopSession, rgbToPng, sessionTarget, transportSessionView } from "./session.js";
+import { DEFAULT_DESKTOP_STREAM_PROFILE, DESKTOP_APP_ID, HEADLESS_DESKTOP_CHANNEL, SessionManager, desktopChannelNextAction, desktopStreamSettings, isDesktopSession, rgbToPng, sessionTarget, transportSessionView } from "./session.js";
 import { applicationDataDirectory, defaultBridgePath } from "./paths.js";
 import { ProfileStore } from "./store.js";
 import { cropRgb, diffRgb, findTemplate } from "./vision.js";
@@ -365,7 +365,7 @@ server.registerTool("session_start", {
   description: "Launches Apollo's Desktop app and establishes a local Moonlight video/input session. This is the default and normal entry point for computer use. The full_hd stream profile defaults to 1920x1080 at 30fps and 20 Mbps; select low_bandwidth for 1280x720 at 30fps and 8 Mbps when the connection is slow, then optionally override individual stream settings. If Apollo is offline and Wake-on-LAN is configured, it sends magic packets and waits before launching. The result's sessionId is required by capture, input, status, and stop tools. It checks required permissions and never takes over an existing running Apollo app.",
   inputSchema: {
     profile_id: z.string().min(1).describe("ID returned by profiles_list."),
-    stream_profile: z.enum(["full_hd", "low_bandwidth"]).default("full_hd").describe("full_hd uses 1920x1080 at 30fps and 20 Mbps. low_bandwidth uses 1280x720 at 30fps and 8 Mbps for constrained connections."),
+    stream_profile: z.enum(["full_hd", "low_bandwidth"]).default(DEFAULT_DESKTOP_STREAM_PROFILE).describe("full_hd uses 1920x1080 at 30fps and 20 Mbps. low_bandwidth uses 1280x720 at 30fps and 8 Mbps for constrained connections."),
     width: z.number().int().min(320).max(3840).optional().describe("Optional override for the selected Desktop stream profile width."),
     height: z.number().int().min(240).max(2160).optional().describe("Optional override for the selected Desktop stream profile height."),
     fps: z.number().int().min(10).max(60).optional().describe("Optional override for the selected Desktop stream profile frame rate."),

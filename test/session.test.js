@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { HEADLESS_DESKTOP_CHANNEL, HEADLESS_PROVIDER_APP_CHANNEL, SessionManager, desktopChannelNextAction, desktopStreamSettings, ppmToPng, sessionView, transportSessionView } from "../src/session.js";
+import { DEFAULT_DESKTOP_STREAM_PROFILE, DESKTOP_STREAM_PROFILES, HEADLESS_DESKTOP_CHANNEL, HEADLESS_PROVIDER_APP_CHANNEL, SessionManager, desktopChannelNextAction, desktopStreamSettings, ppmToPng, sessionView, transportSessionView } from "../src/session.js";
 
 test("converts an RGB PPM frame to a PNG image", () => {
   const ppm = Buffer.concat([
@@ -16,6 +16,8 @@ test("converts an RGB PPM frame to a PNG image", () => {
 });
 
 test("uses full HD for Desktop sessions and provides a low-bandwidth alternative", () => {
+  assert.equal(DEFAULT_DESKTOP_STREAM_PROFILE, "full_hd");
+  assert.deepEqual(desktopStreamSettings(), DESKTOP_STREAM_PROFILES[DEFAULT_DESKTOP_STREAM_PROFILE]);
   assert.deepEqual(desktopStreamSettings(), {
     width: 1920,
     height: 1080,

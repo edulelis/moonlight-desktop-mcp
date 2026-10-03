@@ -67,7 +67,9 @@ normally”, or “change a visible Windows setting.”
    It defaults to the `full_hd` profile (1920×1080/30fps at 20 Mbps). If the
    connection is slow, pass `stream_profile: "low_bandwidth"` for
    1280×720/30fps at 8 Mbps; individual video settings can still override that
-   profile.
+   profile. This is the requested stream size, not a lookup or change to the
+   Windows host's native display resolution; always use the dimensions returned
+   by `screen_capture` for coordinates if the host negotiates a different size.
 4. Save the returned `sessionId`. Call `screen_capture` with it and use the
    returned image and dimensions as the coordinate source for the next action.
    A current capture is the only evidence that a requested app, installer,

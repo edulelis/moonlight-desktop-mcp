@@ -17,7 +17,9 @@ export const DESKTOP_STREAM_PROFILES = Object.freeze({
   low_bandwidth: Object.freeze({ width: 1280, height: 720, fps: 30, bitrate: 8_000 }),
 });
 
-export function desktopStreamSettings({ streamProfile = "full_hd", width, height, fps, bitrate } = {}) {
+export const DEFAULT_DESKTOP_STREAM_PROFILE = "full_hd";
+
+export function desktopStreamSettings({ streamProfile = DEFAULT_DESKTOP_STREAM_PROFILE, width, height, fps, bitrate } = {}) {
   const profile = DESKTOP_STREAM_PROFILES[streamProfile];
   if (!profile) throw new Error(`Unknown Desktop stream profile '${streamProfile}'.`);
   return {
@@ -258,7 +260,7 @@ export class SessionManager extends EventEmitter {
     return this.startReservation !== null;
   }
 
-  async start(profile, { appId = DESKTOP_APP_ID, appName = "Desktop", width = DESKTOP_STREAM_PROFILES.full_hd.width, height = DESKTOP_STREAM_PROFILES.full_hd.height, fps = DESKTOP_STREAM_PROFILES.full_hd.fps, bitrate = DESKTOP_STREAM_PROFILES.full_hd.bitrate } = {}) {
+  async start(profile, { appId = DESKTOP_APP_ID, appName = "Desktop", width = DESKTOP_STREAM_PROFILES[DEFAULT_DESKTOP_STREAM_PROFILE].width, height = DESKTOP_STREAM_PROFILES[DEFAULT_DESKTOP_STREAM_PROFILE].height, fps = DESKTOP_STREAM_PROFILES[DEFAULT_DESKTOP_STREAM_PROFILE].fps, bitrate = DESKTOP_STREAM_PROFILES[DEFAULT_DESKTOP_STREAM_PROFILE].bitrate } = {}) {
     const occupiedSession = [...this.sessions.values()].find((session) =>
       ["launching", "starting", "active", "stopping"].includes(session.state));
     if (occupiedSession) {

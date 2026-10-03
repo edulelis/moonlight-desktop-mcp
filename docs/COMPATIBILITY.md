@@ -35,7 +35,10 @@ installation; `npm run doctor` is the equivalent source-checkout command.
   (1920×1080/30fps at 20 Mbps); choose `low_bandwidth` for
   1280×720/30fps at 8 Mbps when the connection is constrained. Individual
   session inputs may still request up to 3840×2160/60fps and 50 Mbps within the
-  tool schema, but practical host/network performance must be verified.
+  tool schema, but practical host/network performance must be verified. The
+  selected profile requests a stream size; it does not query or modify the
+  Windows host's native display resolution. Use each captured frame's reported
+  dimensions as the coordinate space.
 - Video is decoded locally through FFmpeg and emitted to the MCP as PNG
   screenshots. Audio is intentionally not decoded or exposed.
 - One active local stream at a time. Existing GameStream sessions are detected
