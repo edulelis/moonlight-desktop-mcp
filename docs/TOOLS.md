@@ -8,7 +8,7 @@ marked read-only never launch an app or send remote input.
 | Tool | Purpose |
 | --- | --- |
 | `desktop_channel_status` | Identify the dedicated headless Desktop channel, paired targets, active Desktop sessions, local transport occupancy, and bridge readiness. Start here; generic GUI computer use is not a fallback. |
-| `runtime_status` | Installed version, local platform, data path, native bridge readiness, and update path. |
+| `runtime_status` | Installed version, local platform, data path, native bridge readiness, canonical public documentation, and update path. |
 | `host_status` | Public GameStream host information without pairing or input. |
 | `pairing_begin`, `pairing_status`, `pairing_cancel` | Dedicated Apollo PIN pairing lifecycle. |
 | `profiles_list` | Local paired identities without secret material. |

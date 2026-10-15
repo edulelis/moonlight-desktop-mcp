@@ -32,6 +32,9 @@ test("advertises the Desktop-first visual computer-use contract", async (t) => {
   assert.match(instructions, /Wake-on-LAN/i);
   assert.match(instructions, /dedicated headless Moonlight remote-desktop channel/i);
   assert.match(instructions, /do not fall back to generic GUI computer use/i);
+  assert.match(instructions, /host_status.*pairing_begin.*pairing_status/i);
+  assert.match(instructions, /desktop_channel_status or profiles_list.*session_preflight.*session_start/i);
+  assert.match(instructions, /screen_capture before coordinate input/i);
 
   const result = await client.listTools();
   const tools = new Map(result.tools.map((tool) => [tool.name, tool]));
@@ -47,6 +50,13 @@ test("advertises the Desktop-first visual computer-use contract", async (t) => {
   assert.match(tools.get("host_wake").description, /magic packet/i);
   assert.match(tools.get("provider_app_start").description, /explicit/i);
   assert.equal(tools.get("runtime_status").annotations.readOnlyHint, true);
+
+  const runtimeResult = await client.callTool({ name: "runtime_status", arguments: {} });
+  const runtimeStatus = JSON.parse(runtimeResult.content[0].text);
+  assert.equal(runtimeStatus.name, "moonlight-desktop-mcp");
+  assert.match(runtimeStatus.documentation.install, /github\.com\/edulelis\/moonlight-desktop-mcp\/blob\/main\/docs\/INSTALL\.md$/);
+  assert.match(runtimeStatus.documentation.agentGuide, /docs\/AGENT-GUIDE\.md$/);
+  assert.match(runtimeStatus.updateInstructions, /documentation|github\.com/i);
 
   const channelResult = await client.callTool({ name: "desktop_channel_status", arguments: {} });
   const channelStatus = JSON.parse(channelResult.content[0].text);

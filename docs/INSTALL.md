@@ -59,6 +59,18 @@ codex mcp get moonlight-desktop --json
 An existing entry is intentionally left unchanged. Update its command yourself
 if it points to an old or custom location.
 
+The MCP advertises its essential operating instructions during initialization.
+Codex users who also want the reusable `moonlight-desktop-operator` skill can
+change into the managed application location shown above and run:
+
+```sh
+npm run install:codex-skill
+```
+
+Restart Codex after installing the skill. The command does not replace an
+existing copy; review it first, then use `npm run install:codex-skill -- --force`
+only when you intentionally want to update that one skill.
+
 For another MCP client, configure a local stdio server with its command set to
 the `node` executable and its argument set to `src/index.js` inside the managed
 application location above. Give it a private `MOONLIGHT_MCP_DATA_DIR`. The
@@ -86,17 +98,17 @@ using `MOONLIGHT_MCP_INSTALL_DIR`.
 The standard commands track the public `main` branch. You can read the
 [macOS/Linux installer](../install.sh) or [Windows installer](../install.ps1)
 before running it. To install a specific release, pin **both** the downloaded
-script and the checked-out revision. Replace `v0.8.0` with the release you
+script and the checked-out revision. Replace `v0.9.0` with the release you
 intend to use.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.8.0/install.sh \
-  | MOONLIGHT_MCP_REF=v0.8.0 bash
+  https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.9.0/install.sh \
+  | MOONLIGHT_MCP_REF=v0.9.0 bash
 ```
 
 ```powershell
-$env:MOONLIGHT_MCP_REF = "v0.8.0"; irm https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.8.0/install.ps1 | iex
+$env:MOONLIGHT_MCP_REF = "v0.9.0"; irm https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.9.0/install.ps1 | iex
 ```
 
 `MOONLIGHT_MCP_INSTALL_DIR` selects a different managed application location.

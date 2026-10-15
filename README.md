@@ -1,10 +1,14 @@
 # Moonlight Desktop MCP
 
-Control a paired Apollo or Sunshine **Windows Desktop** through an MCP client.
-The MCP opens a Moonlight/GameStream Desktop stream, returns screenshots, and
-sends mouse and keyboard input in that screenshot's coordinate space. It is
-for visible tasks such as opening an application, changing a setting, or
-dismissing a dialog—not for hidden Windows shell, registry, or process access.
+A local stdio MCP server for visual computer use on a paired Apollo or Sunshine
+**Windows Desktop**. MCP clients and coding agents can capture the remote
+screen, locate visible controls, and send mouse or keyboard input in that same
+coordinate space.
+
+The server runs on the controlling macOS, Linux, or Windows machine and talks
+to the Windows host over Moonlight/GameStream. It is for visible tasks such as
+opening an application, changing a setting, or dismissing a dialog—not for a
+hidden Windows shell, registry, process access, or a Windows-side agent.
 
 ## Choose your path
 
@@ -13,15 +17,34 @@ dismissing a dialog—not for hidden Windows shell, registry, or process access.
 | Install, update, and run the MCP | [Install and update](docs/INSTALL.md) |
 | Pair a PC and use the visual tools | [Use the MCP](docs/USE.md) |
 | Clone, modify, test, or build the source yourself | [Develop from source](docs/DEVELOPMENT.md) |
+| Give an agent the concise operating contract | [Agent operating guide](docs/AGENT-GUIDE.md) |
 
 Most people need only the first two links. The commands in the development
 guide are deliberately not part of the normal installation path.
+
+## Discovery for clients and agents
+
+- [`server.json`](server.json) provides the standard MCP server identity,
+  repository, version, and canonical installation page for catalogs and
+  clients. Because this project requires a controller-native build, the card
+  points to the managed installer instead of advertising an npm package or a
+  hosted remote endpoint.
+- [`llms.txt`](llms.txt) is a compact, model-readable map of the canonical
+  installation, use, tool, architecture, and safety documentation.
+- [`AGENTS.md`](AGENTS.md) guides coding agents working in this repository;
+  [`docs/AGENT-GUIDE.md`](docs/AGENT-GUIDE.md) guides agents operating the
+  installed MCP. Codex users can also install the bundled
+  [`moonlight-desktop-operator` skill](agents/codex/moonlight-desktop-operator/SKILL.md).
 
 ## Install or update
 
 Run one command on the computer that will run the MCP—your Mac, Linux, or
 Windows machine, not the Windows PC being controlled. Re-run the same command
 later to update a clean installation.
+
+This project is not distributed as a ready-to-run npm or npx package. Use the
+platform installer below so the native Moonlight bridge and controller
+dependencies are built and checked together.
 
 macOS and Linux:
 

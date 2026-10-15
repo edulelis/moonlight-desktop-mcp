@@ -1,0 +1,30 @@
+# Moonlight Desktop MCP
+
+> A local stdio Model Context Protocol server that lets MCP clients and coding agents see and operate a paired Apollo or Sunshine Windows desktop over Moonlight/GameStream.
+
+This server runs on the controlling macOS, Linux, or Windows machine. It opens
+Apollo's Desktop stream, returns screenshots, and sends mouse and keyboard
+input in the screenshot coordinate space. It does not provide a Windows shell,
+registry access, process inspection, or a Windows-side agent. Install it with
+the repository's platform installer rather than npm or npx.
+
+## Start here
+
+- [Project overview](https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/README.md): Purpose, supported workflow, installation commands, and safety boundaries.
+- [Install and update](https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/docs/INSTALL.md): Controller prerequisites, managed installation, MCP client configuration, updates, and private state locations.
+- [Use the MCP](https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/docs/USE.md): Pairing and the required capture, input, and visual-verification loop.
+- [Tool reference](https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/docs/TOOLS.md): Complete MCP tool groups and identifiers.
+- [Agent operating guide](https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/docs/AGENT-GUIDE.md): Target selection, authorization, session ownership, and visible-verification rules.
+
+## Architecture and safety
+
+- [Architecture](https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/docs/ARCHITECTURE.md): Controller/host boundary, transport, coordinates, credentials, and native bridge.
+- [Security](https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/docs/SECURITY.md): Threat boundaries and handling of pairing keys, frames, and input.
+- [Compatibility](https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/docs/COMPATIBILITY.md): Supported hosts, controllers, codecs, and known limits.
+- [Troubleshooting](https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/docs/TROUBLESHOOTING.md): Installation, pairing, stream, capture, OCR, and cleanup failures.
+
+## Contributors
+
+- [Coding-agent instructions](https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/AGENTS.md): Repository-specific constraints for automated contributors.
+- [Development guide](https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/docs/DEVELOPMENT.md): Source prerequisites, build, checks, and local MCP registration.
+- [Contributing](https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/main/CONTRIBUTING.md): Invariants, verification, and release discipline.

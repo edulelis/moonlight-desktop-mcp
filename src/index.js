@@ -17,6 +17,15 @@ import { recognizePng } from "./ocr.js";
 import { resolveHotkey, resolveVirtualKey } from "./keys.js";
 import { normalizeWakeOnLanConfiguration, sendWakeOnLan, wakeOnLanSummary } from "./wol.js";
 
+const PROJECT_URL = "https://github.com/edulelis/moonlight-desktop-mcp";
+const DOCUMENTATION_URLS = Object.freeze({
+  overview: `${PROJECT_URL}#readme`,
+  install: `${PROJECT_URL}/blob/main/docs/INSTALL.md`,
+  use: `${PROJECT_URL}/blob/main/docs/USE.md`,
+  tools: `${PROJECT_URL}/blob/main/docs/TOOLS.md`,
+  agentGuide: `${PROJECT_URL}/blob/main/docs/AGENT-GUIDE.md`,
+});
+
 function json(value) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
 }
@@ -114,15 +123,16 @@ const server = new McpServer({
   version: packageInfo.version,
 }, {
   instructions: [
-    "This MCP is the dedicated headless Moonlight remote-desktop channel. When a paired remote Desktop is expected, first call desktop_channel_status, then select this MCP's session, capture, and input tools; do not fall back to generic GUI computer use, which would operate a local Moonlight window rather than the remote Desktop. Its screenshots and input operate the remote Desktop, not the invoker's local OS. Before interaction, discover or reuse a paired profile, call session_preflight, and use session_start to open a new Desktop stream. Configure Wake-on-LAN with profile_wol_configure when the host must be powered on remotely; session_preflight and session_start can then wake an offline host. A live session with a current frame identifies the target and is required before input. Use that current capture, not controller-local assumptions, to establish whether a requested app, installer, account, or license step is visibly available.",
-    "Capture before coordinate input, use the current frame's coordinate space, prefer OCR or template locations over guesses, verify every meaningful action visually, and call session_stop when finished. session_start controls only a new virtual Desktop and never takes over an existing stream. Use provider_app_start only when the user explicitly requests an Apollo-registered provider app.",
+    "This local stdio MCP is the dedicated headless Moonlight remote-desktop channel. Its screenshots and input operate the paired remote Desktop on Windows, not the invoker's local OS. Start every remote Desktop task with desktop_channel_status and follow its nextAction; do not fall back to generic GUI computer use, which would operate a local controller window.",
+    "If there is no paired target, check the intended Apollo or Sunshine host with host_status, call pairing_begin, let the user enter its one-time PIN at the returned Apollo Web UI URL, then call pairing_status. For an existing target, use the profileId returned by desktop_channel_status or profiles_list. Next call session_preflight with mode computer_use, then session_start to open Apollo's Desktop. Configure Wake-on-LAN with profile_wol_configure only from user-supplied network values; preflight and start can then wake an offline host.",
+    "After session_start, call screen_capture before coordinate input and use that current frame's coordinate space. Prefer visible reasoning, OCR, or template locations over guesses; verify every meaningful action with a fresh capture or visual wait, and call session_stop when finished. A live session with a current frame is the source of truth for the target and for visible app, installer, account, or license state. session_start never takes over an existing stream. Use provider_app_start only when the user explicitly requests an Apollo-registered provider app.",
     "Pairing returns a one-time PIN and Apollo Web UI URL; never expose local profile keys. Stop and let the user complete account sign-in, credential or one-time-code entry, license activation, and terms or EULA acceptance.",
   ].join(" "),
 });
 
 server.registerTool("runtime_status", {
   title: "Check MCP version and local readiness",
-  description: "Reports this MCP's installed version, local platform, and whether its native Moonlight bridge is built. It sends no host request and does not change installations, profiles, or sessions.",
+  description: "Reports this MCP's installed version, local platform, native Moonlight bridge readiness, and canonical public setup and usage documentation. It sends no host request and does not change installations, profiles, or sessions.",
   annotations: { readOnlyHint: true, openWorldHint: false },
 }, safe(async () => {
   const bridgePath = defaultBridgePath();
@@ -134,8 +144,9 @@ server.registerTool("runtime_status", {
     node: process.version,
     dataDirectory: applicationDataDirectory(),
     nativeBridge: { ready: existsSync(bridgePath), path: bridgePath },
-    updateCheck: "For a normal managed installation, rerun the one-command installer in docs/INSTALL.md. npm run check:updates is a source-maintenance check; add -- --remote only to compare an intentional Git checkout with its remote without changing it.",
-    updateInstructions: "Normal installations: follow docs/INSTALL.md and keep the local pairing-data directory. Intentional source checkouts: follow docs/DEVELOPMENT.md#update-a-source-checkout.",
+    documentation: DOCUMENTATION_URLS,
+    updateCheck: "For a normal managed installation, rerun the one-command installer linked by documentation.install. npm run check:updates is a source-maintenance check; add -- --remote only to compare an intentional Git checkout with its remote without changing it.",
+    updateInstructions: `Normal installations: follow ${DOCUMENTATION_URLS.install} and keep the local pairing-data directory. Intentional source checkouts: follow ${PROJECT_URL}/blob/main/docs/DEVELOPMENT.md#update-a-source-checkout.`,
   };
 }));
 

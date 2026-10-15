@@ -1,9 +1,29 @@
 {
   "name": "moonlight-desktop-mcp",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
-  "description": "Headless Moonlight/GameStream desktop MCP for Apollo and Sunshine",
+  "description": "Local stdio MCP server for visual control of an Apollo or Sunshine Windows desktop over Moonlight/GameStream",
+  "mcpName": "io.github.edulelis/moonlight-desktop-mcp",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "moonlight",
+    "gamestream",
+    "apollo",
+    "sunshine",
+    "remote-desktop",
+    "computer-use",
+    "windows"
+  ],
+  "homepage": "https://github.com/edulelis/moonlight-desktop-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/edulelis/moonlight-desktop-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/edulelis/moonlight-desktop-mcp/issues"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -25,6 +45,8 @@
     "scripts/setup-native.js",
     "src",
     "README.md",
+    "llms.txt",
+    "server.json",
     "install.sh",
     "install.ps1",
     "moonlight-core.lock.json"
