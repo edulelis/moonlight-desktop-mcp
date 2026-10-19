@@ -43,3 +43,14 @@ Use a dedicated Apollo identity for this MCP, review its permissions in Apollo,
 and remove that identity in Apollo if the invoker is lost or no longer trusted.
 Keep the MCP data directory backed up only through an encrypted, access-limited
 backup process. Re-pair after a suspected key disclosure.
+
+## Dependency advisory disposition
+
+`node-forge` 1.4.0 currently has no patched release for
+[GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv),
+which affects its RSA PKCS#1 v1.5 signature-verification implementation. This
+project uses `node-forge` only to create the local self-signed pairing identity
+and to read certificate signature bytes. Apollo signature verification uses
+Node's `crypto.verify`, not the affected `node-forge` verifier. Release checks
+still run `npm audit`; this exception should be removed as soon as a patched
+release or a compatible replacement is available.

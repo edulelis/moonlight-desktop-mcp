@@ -98,17 +98,17 @@ using `MOONLIGHT_MCP_INSTALL_DIR`.
 The standard commands track the public `main` branch. You can read the
 [macOS/Linux installer](../install.sh) or [Windows installer](../install.ps1)
 before running it. To install a specific release, pin **both** the downloaded
-script and the checked-out revision. Replace `v0.9.0` with the release you
+script and the checked-out revision. Replace `v0.9.1` with the release you
 intend to use.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.9.0/install.sh \
-  | MOONLIGHT_MCP_REF=v0.9.0 bash
+  https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.9.1/install.sh \
+  | MOONLIGHT_MCP_REF=v0.9.1 bash
 ```
 
 ```powershell
-$env:MOONLIGHT_MCP_REF = "v0.9.0"; irm https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.9.0/install.ps1 | iex
+$env:MOONLIGHT_MCP_REF = "v0.9.1"; irm https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.9.1/install.ps1 | iex
 ```
 
 `MOONLIGHT_MCP_INSTALL_DIR` selects a different managed application location.

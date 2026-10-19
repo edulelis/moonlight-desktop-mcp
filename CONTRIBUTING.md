@@ -41,3 +41,10 @@ Update `package.json`, `package-lock.json`, and the MCP server version together.
 Run `npm run check:updates` before dependency upgrades. Treat a pinned
 `moonlight-core.lock.json` revision change as a transport change: rebuild and
 exercise pairing, channel-in-use detection, capture, input, and cleanup.
+
+A `v*` tag must exactly match the package and `server.json` version. Pushing
+that tag runs the full JavaScript/MCP contract checks, validates `server.json`
+with the official publisher, authenticates through GitHub Actions OIDC, and
+publishes the metadata to the official MCP Registry. The workflow uses no PAT
+or registry secret. Do not move or reuse a published version tag; Registry
+version metadata is immutable, so corrections require a new version.
