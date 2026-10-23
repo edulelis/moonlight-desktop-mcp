@@ -1,9 +1,6 @@
 # Changelog
 
-## 0.10.0 — Unreleased
-
-Release candidate prepared on 2026-10-23. This entry does not announce a
-published tag, Registry update, or installed-runtime upgrade.
+## 0.10.0 — 2026-10-23
 
 ### Capture and responsiveness
 
@@ -39,8 +36,8 @@ published tag, Registry update, or installed-runtime upgrade.
 - Normalize native executable output paths for multi-configuration Windows
   generators so the controller build script can find the generated bridge.
   Statically link the pinned Moonlight core on Windows to avoid missing DLL
-  exports and a private DLL lookup path. A Windows native CI build is still
-  required before release.
+  exports and a private DLL lookup path. Registry publication requires a
+  successful Windows native CI build.
 
 ### Dependencies
 
@@ -80,10 +77,10 @@ Local preparation checks passed on 2026-10-23: all 74 JavaScript tests on
 macOS with Node 20, 22, and 24 and on Linux with Node 24; Mac/Linux native
 builds, fixtures, and production loader probes; isolated Linux installer
 bootstrap/update; package dry-run; official MCP publisher 1.8.2 metadata
-validation; and workflow lint/release guards. The hosted CI matrix, including
-the Windows build, has not run for this candidate.
+validation; and workflow lint/release guards. Registry publication additionally
+requires the hosted CI matrix, including the Windows native build.
 
-### Upgrade and release gates
+### Upgrade and release notes
 
 - Rebuild the native bridge and restart the MCP client together. Capture
   protocol 1 requires the matching native executable; an older native binary
@@ -97,7 +94,4 @@ the Windows build, has not run for this candidate.
 - Rerun the locked dependency audit. The existing policy blocks critical
   advisories and discloses the unresolved high `node-forge` finding. See
   [Security](docs/SECURITY.md) for the dated findings and fixed moderate
-  advisory. This candidate does not claim a clean dependency audit.
-- Publish only after the gates pass and release publication is authorized.
-  Until then, v0.9.1 remains the pinned published-release example in the
-  [installation guide](docs/INSTALL.md).
+  advisory. This release does not claim a clean dependency audit.

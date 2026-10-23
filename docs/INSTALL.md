@@ -95,12 +95,11 @@ using `MOONLIGHT_MCP_INSTALL_DIR`.
 
 ### Updating to the 0.10.0 capture pipeline
 
-Version 0.10.0 is an unreleased candidate; see the [release notes](../CHANGELOG.md)
-for its validation gates. The examples below keep the published v0.9.1 pin
-until a matching v0.10.0 release is available.
+Version 0.10.0 includes the capture pipeline improvements described in the
+[release notes](../CHANGELOG.md). Re-run the normal installer to install it.
 
-When 0.10.0 is released, use the normal installer to rebuild the native bridge
-and restart the MCP client together. Its on-demand capture protocol requires
+Use the normal installer to rebuild the native bridge and restart the MCP client
+together. Its on-demand capture protocol requires
 the matching native executable; copying only the JavaScript files into an old
 installation is insufficient. Pairing profiles remain in the private state
 directory and do not need to be recreated for this update.
@@ -110,17 +109,16 @@ directory and do not need to be recreated for this update.
 The standard commands track the public `main` branch. You can read the
 [macOS/Linux installer](../install.sh) or [Windows installer](../install.ps1)
 before running it. To install a specific release, pin **both** the downloaded
-script and the checked-out revision. Replace `v0.9.1` with the release you
-intend to use.
+script and the checked-out revision.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.9.1/install.sh \
-  | MOONLIGHT_MCP_REF=v0.9.1 bash
+  https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.10.0/install.sh \
+  | MOONLIGHT_MCP_REF=v0.10.0 bash
 ```
 
 ```powershell
-$env:MOONLIGHT_MCP_REF = "v0.9.1"; irm https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.9.1/install.ps1 | iex
+$env:MOONLIGHT_MCP_REF = "v0.10.0"; irm https://raw.githubusercontent.com/edulelis/moonlight-desktop-mcp/v0.10.0/install.ps1 | iex
 ```
 
 `MOONLIGHT_MCP_INSTALL_DIR` selects a different managed application location.
