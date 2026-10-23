@@ -102,7 +102,7 @@ jobs:
           MOONLIGHT_MCP_REPOSITORY: ${{ github.workspace }}
           MOONLIGHT_MCP_INSTALL_DIR: ${{ runner.temp }}/moonlight-desktop-mcp-install
           MOONLIGHT_MCP_CONFIGURE_CODEX: "0"
-          MOONLIGHT_MCP_REF: ${{ github.ref == 'refs/heads/main' && 'main' || github.sha }}
+          MOONLIGHT_MCP_REF: ${{ github.sha }}
         run: |
           bash ./install.sh
           bash ./install.sh
