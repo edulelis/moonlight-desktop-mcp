@@ -93,6 +93,18 @@ discard files blindly. Either preserve those changes in a source clone and
 follow [Develop from source](DEVELOPMENT.md), or install into another location
 using `MOONLIGHT_MCP_INSTALL_DIR`.
 
+### Updating to the 0.10.0 capture pipeline
+
+Version 0.10.0 is an unreleased candidate; see the [release notes](../CHANGELOG.md)
+for its validation gates. The examples below keep the published v0.9.1 pin
+until a matching v0.10.0 release is available.
+
+When 0.10.0 is released, use the normal installer to rebuild the native bridge
+and restart the MCP client together. Its on-demand capture protocol requires
+the matching native executable; copying only the JavaScript files into an old
+installation is insufficient. Pairing profiles remain in the private state
+directory and do not need to be recreated for this update.
+
 ## Review or pin a release
 
 The standard commands track the public `main` branch. You can read the

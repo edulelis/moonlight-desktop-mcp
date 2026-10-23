@@ -24,7 +24,7 @@ marked read-only never launch an app or send remote input.
 | --- | --- |
 | `session_start` | Start a new virtual Desktop session. Normal computer-use entry point. |
 | `provider_app_start` | Start an explicit Apollo provider app; not the normal Desktop path. |
-| `session_status` | Local transport/frame state. |
+| `session_status` | Local transport/frame state and capture/PNG timing and cache counters. |
 | `session_stop` | Stop only the session owned by this MCP process. |
 
 `profiles_list[].id` is the `profile_id` for these tools. `session_start` and
@@ -56,6 +56,24 @@ the source of truth and still do not start another one.
 
 Snapshots and templates are session-local. They are not a durable image store;
 capture again if the session ends or the UI changes.
+
+Image processing permits two active and two pending jobs across the MCP.
+If an image tool reports that processing is busy, wait for an in-flight request
+to finish before retrying. Session stop cancels its pending image work.
+
+`session_wait_for_change` and `screen_wait_for_text` accept `include_image`
+(default `true`). Set it to `false` when the pixel-change/OCR result is sufficient;
+the response contains text metadata and no image block. A pixel change alone
+does not establish that the intended UI action succeeded. Use a screenshot for
+semantic interpretation or ambiguous results. `screen_find_text` already returns
+only matching text and coordinates; `screen_crop` can return a focused image.
+
+Local decoding, PNG encoding, and OCR do not use an AI model. Background video
+frames are not automatically sent to the model. Tool image/text responses do
+consume context when included by the MCP client. Smaller PNG files are not a
+token count: image tokenization depends on the model, dimensions, and detail
+settings. Measure complete task traces before claiming token savings between
+different control backends.
 
 ## Visual input
 

@@ -3,7 +3,7 @@
   "name": "io.github.edulelis/moonlight-desktop-mcp",
   "title": "Moonlight Desktop MCP",
   "description": "Visual Windows desktop control over Moonlight/GameStream for MCP clients and coding agents",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "websiteUrl": "https://github.com/edulelis/moonlight-desktop-mcp/blob/main/docs/INSTALL.md",
   "repository": {
     "url": "https://github.com/edulelis/moonlight-desktop-mcp",

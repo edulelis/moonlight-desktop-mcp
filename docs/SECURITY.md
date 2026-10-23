@@ -46,11 +46,36 @@ backup process. Re-pair after a suspected key disclosure.
 
 ## Dependency advisory disposition
 
-`node-forge` 1.4.0 currently has no patched release for
-[GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv),
-which affects its RSA PKCS#1 v1.5 signature-verification implementation. This
-project uses `node-forge` only to create the local self-signed pairing identity
-and to read certificate signature bytes. Apollo signature verification uses
-Node's `crypto.verify`, not the affected `node-forge` verifier. Release checks
-still run `npm audit`; this exception should be removed as soon as a patched
-release or a compatible replacement is available.
+The 0.10.0 candidate's locked dependency audit on **2026-10-23** reports one high
+advisory and no moderate advisories. It is not an audit-clean release. After
+`npm run check:updates`, a targeted lock-only refresh updated `ip-address` from
+10.7.2 to 10.7.4 within its existing allowed range. All other dependency
+resolutions and manifest dependency ranges are unchanged.
+
+| Locked dependency | Advisory | Audit result on 2026-10-23 |
+| --- | --- | --- |
+| `node-forge` 1.4.0 (direct) | [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv): RSA PKCS#1 v1.5 signature-verification issue | High; `npm audit` reports no fix available. |
+| `ip-address` 10.7.4 (through MCP SDK and `express-rate-limit`) | [GHSA-rxp7-6hxx-x8q5](https://github.com/advisories/GHSA-rxp7-6hxx-x8q5): quadratic-time IPv6 zone-identifier parsing | Moderate finding in the previous 10.7.2 lock; no longer reported by `npm audit --package-lock-only` after the targeted update. |
+
+Current `node-forge` use creates the local self-signed pairing identity and
+reads certificate signature bytes; Apollo signature verification uses Node's
+`crypto.verify`. This usage review does not establish that the application is
+unaffected by the advisory. Updating the transitive `ip-address` resolution
+removes its audit finding; it is not an application exploitability assessment.
+
+Before publishing, rerun `npm audit` against the exact release lockfile and
+recheck patched-version availability. The release workflow rejects critical
+advisories; this existing high finding remains disclosed under that policy.
+A remediation update must first run `npm run check:updates`, preserve a
+reviewable dependency diff, and pass the relevant contract/native checks.
+Do not use an unattended `npm audit fix` to change the candidate.
+
+## Capture resource bounds
+
+The candidate limits PNG encoding to two active and two pending jobs. Cancelled
+queued jobs are removed, and excess work is refused instead of allowing an
+unbounded encoding backlog. A cancelled active job keeps its slot until its
+underlying encoding finishes. RGB snapshot retention is limited to twelve
+snapshots and 96 MiB, plus an encoded-image cache. These are component limits,
+not a total-process memory cap: decoders, in-flight frames, OCR workers, and
+image responses also require memory.

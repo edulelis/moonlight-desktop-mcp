@@ -9,7 +9,7 @@ import packageInfo from "../package.json" with { type: "json" };
 import { getServerInfo, hostUrls, normalizeHost } from "./host.js";
 import { getAuthenticatedHostStatus, listApps, PairingManager } from "./pairing.js";
 import { ACCESS_MODES, decodePermissions, preflightAccess } from "./permissions.js";
-import { DEFAULT_DESKTOP_STREAM_PROFILE, DESKTOP_APP_ID, HEADLESS_DESKTOP_CHANNEL, SessionManager, desktopChannelNextAction, desktopStreamSettings, isDesktopSession, rgbToPng, sessionTarget, transportSessionView } from "./session.js";
+import { DEFAULT_DESKTOP_STREAM_PROFILE, DESKTOP_APP_ID, HEADLESS_DESKTOP_CHANNEL, SessionManager, desktopChannelNextAction, desktopStreamSettings, isDesktopSession, sessionTarget, transportSessionView } from "./session.js";
 import { applicationDataDirectory, defaultBridgePath } from "./paths.js";
 import { ProfileStore } from "./store.js";
 import { cropRgb, diffRgb, findTemplate } from "./vision.js";
@@ -27,7 +27,7 @@ const DOCUMENTATION_URLS = Object.freeze({
 });
 
 function json(value) {
-  return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
+  return { content: [{ type: "text", text: JSON.stringify(value) }] };
 }
 
 function errorResult(error) {
@@ -64,12 +64,11 @@ async function ocrInput({ sessionId, snapshotId, maxAgeMs, region }) {
   if (suppliedRegion && Object.values(region).some((value) => value === undefined)) {
     throw new Error("region_x, region_y, region_width, and region_height must be supplied together.");
   }
-  const capture = snapshotId ? null : await sessions.capture(sessionId, maxAgeMs);
-  const snapshot = sessions.getSnapshot(sessionId, snapshotId ?? capture.snapshotId);
-  const image = suppliedRegion
-    ? cropRgb(snapshot, { x: region.x, y: region.y, width: region.width, height: region.height })
-    : snapshot;
-  return { snapshot, region: suppliedRegion ? { x: region.x, y: region.y, width: region.width, height: region.height } : null, png: rgbToPng(image).png };
+  const snapshot = snapshotId ? sessions.getSnapshot(sessionId, snapshotId) : await sessions.captureSnapshot(sessionId, maxAgeMs);
+  const png = suppliedRegion
+    ? (await sessions.cropPng(sessionId, snapshot.id, region)).png
+    : await sessions.snapshotPng(sessionId, snapshot.id);
+  return { snapshot, region: suppliedRegion ? { x: region.x, y: region.y, width: region.width, height: region.height } : null, png };
 }
 
 function textMatches(layout, query) {
@@ -458,12 +457,11 @@ server.registerTool("screen_crop", {
   },
   annotations: { readOnlyHint: true, openWorldHint: false },
 }, safeResult(async ({ session_id: sessionId, snapshot_id: snapshotId, x, y, width, height, max_age_ms: maxAgeMs }) => {
-  const capture = snapshotId ? null : await sessions.capture(sessionId, maxAgeMs);
-  const snapshot = sessions.getSnapshot(sessionId, snapshotId ?? capture.snapshotId);
-  const crop = cropRgb(snapshot, { x, y, width, height });
+  const snapshot = snapshotId ? sessions.getSnapshot(sessionId, snapshotId) : await sessions.captureSnapshot(sessionId, maxAgeMs);
+  const crop = await sessions.cropPng(sessionId, snapshot.id, { x, y, width, height });
   return {
     content: [
-      { type: "image", data: rgbToPng(crop).png.toString("base64"), mimeType: "image/png" },
+      { type: "image", data: crop.png.toString("base64"), mimeType: "image/png" },
       { type: "text", text: JSON.stringify({ sessionId, snapshotId: snapshot.id, crop: { x, y, width, height }, frameSequence: snapshot.frameSequence }) },
     ],
   };
@@ -482,8 +480,7 @@ server.registerTool("screen_diff", {
   annotations: { readOnlyHint: true, openWorldHint: false },
 }, safe(async ({ session_id: sessionId, baseline_snapshot_id: baselineSnapshotId, comparison_snapshot_id: comparisonSnapshotId, pixel_threshold: pixelThreshold, max_age_ms: maxAgeMs }) => {
   const baseline = sessions.getSnapshot(sessionId, baselineSnapshotId);
-  const capture = comparisonSnapshotId ? null : await sessions.capture(sessionId, maxAgeMs);
-  const comparison = sessions.getSnapshot(sessionId, comparisonSnapshotId ?? capture.snapshotId);
+  const comparison = comparisonSnapshotId ? sessions.getSnapshot(sessionId, comparisonSnapshotId) : await sessions.captureSnapshot(sessionId, maxAgeMs);
   return {
     sessionId,
     baselineSnapshotId: baseline.id,
@@ -501,13 +498,14 @@ server.registerTool("session_wait_for_change", {
     timeout_ms: z.number().int().min(250).max(30_000).default(5_000),
     min_changed_fraction: z.number().positive().max(1).default(0.003),
     pixel_threshold: z.number().int().min(0).max(255).default(32),
+    include_image: z.boolean().default(true).describe("Set false for text-only pixel-change results; use screen_capture when visual interpretation is needed."),
     region_x: z.number().int().min(0).optional(),
     region_y: z.number().int().min(0).optional(),
     region_width: z.number().int().min(1).max(3840).optional(),
     region_height: z.number().int().min(1).max(2160).optional(),
   },
   annotations: { readOnlyHint: true, openWorldHint: false },
-}, safeResult(async ({ session_id: sessionId, baseline_snapshot_id: baselineSnapshotId, timeout_ms: timeoutMs, min_changed_fraction: minChangedFraction, pixel_threshold: pixelThreshold, region_x: x, region_y: y, region_width: width, region_height: height }) => {
+}, safeResult(async ({ session_id: sessionId, baseline_snapshot_id: baselineSnapshotId, timeout_ms: timeoutMs, min_changed_fraction: minChangedFraction, pixel_threshold: pixelThreshold, include_image: includeImage, region_x: x, region_y: y, region_width: width, region_height: height }) => {
   const suppliedRegion = [x, y, width, height].some((value) => value !== undefined);
   if (suppliedRegion && [x, y, width, height].some((value) => value === undefined)) {
     throw new Error("region_x, region_y, region_width, and region_height must be supplied together.");
@@ -516,7 +514,7 @@ server.registerTool("session_wait_for_change", {
   const result = await sessions.waitForVisualChange(sessionId, { baselineSnapshotId, timeoutMs, minChangedFraction, pixelThreshold, region });
   return {
     content: [
-      { type: "image", data: rgbToPng(result.current).png.toString("base64"), mimeType: "image/png" },
+      ...(includeImage ? [{ type: "image", data: (await sessions.snapshotPng(sessionId, result.current.id)).toString("base64"), mimeType: "image/png" }] : []),
       { type: "text", text: JSON.stringify({
         sessionId,
         changed: result.changed,
@@ -564,8 +562,7 @@ server.registerTool("screen_find_template", {
   },
   annotations: { readOnlyHint: true, openWorldHint: false },
 }, safe(async ({ session_id: sessionId, template_id: templateId, min_score: minScore, search_x: searchX, search_y: searchY, search_width: searchWidth, search_height: searchHeight, max_age_ms: maxAgeMs }) => {
-  const capture = await sessions.capture(sessionId, maxAgeMs);
-  const snapshot = sessions.getSnapshot(sessionId, capture.snapshotId);
+  const snapshot = await sessions.captureSnapshot(sessionId, maxAgeMs);
   const template = sessions.getTemplate(sessionId, templateId);
   const suppliedRegion = [searchX, searchY, searchWidth, searchHeight].some((value) => value !== undefined);
   if (suppliedRegion && [searchX, searchY, searchWidth, searchHeight].some((value) => value === undefined)) {
@@ -643,13 +640,14 @@ server.registerTool("screen_wait_for_text", {
     min_confidence: z.number().min(0).max(100).default(40),
     timeout_ms: z.number().int().min(500).max(60_000).default(10_000),
     poll_interval_ms: z.number().int().min(250).max(10_000).default(1_000),
+    include_image: z.boolean().default(true).describe("Set false to return only OCR matches and coordinates, omitting image input to the model."),
     region_x: z.number().int().min(0).optional(),
     region_y: z.number().int().min(0).optional(),
     region_width: z.number().int().min(1).max(3840).optional(),
     region_height: z.number().int().min(1).max(2160).optional(),
   },
   annotations: { readOnlyHint: true, openWorldHint: false },
-}, safeResult(async ({ session_id: sessionId, query, language, min_confidence: minConfidence, timeout_ms: timeoutMs, poll_interval_ms: pollIntervalMs, region_x: x, region_y: y, region_width: width, region_height: height }) => {
+}, safeResult(async ({ session_id: sessionId, query, language, min_confidence: minConfidence, timeout_ms: timeoutMs, poll_interval_ms: pollIntervalMs, include_image: includeImage, region_x: x, region_y: y, region_width: width, region_height: height }) => {
   const deadline = Date.now() + timeoutMs;
   let latest;
   let matches = [];
@@ -660,7 +658,7 @@ server.registerTool("screen_wait_for_text", {
     if (matches.length > 0) {
       return {
         content: [
-          { type: "image", data: latest.png.toString("base64"), mimeType: "image/png" },
+          ...(includeImage ? [{ type: "image", data: latest.png.toString("base64"), mimeType: "image/png" }] : []),
           { type: "text", text: JSON.stringify({ sessionId, found: true, query, language, snapshotId: latest.snapshot.id, frameSequence: latest.snapshot.frameSequence, matches: matches.slice(0, 20) }) },
         ],
       };
@@ -669,7 +667,7 @@ server.registerTool("screen_wait_for_text", {
   } while (Date.now() < deadline);
   return {
     content: [
-      { type: "image", data: latest.png.toString("base64"), mimeType: "image/png" },
+      ...(includeImage ? [{ type: "image", data: latest.png.toString("base64"), mimeType: "image/png" }] : []),
       { type: "text", text: JSON.stringify({ sessionId, found: false, timedOut: true, query, language, snapshotId: latest.snapshot.id, frameSequence: latest.snapshot.frameSequence, matches: [] }) },
     ],
   };

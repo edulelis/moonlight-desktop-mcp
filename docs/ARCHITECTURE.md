@@ -24,6 +24,40 @@ The small C bridge uses the upstream Moonlight common C library for the
 GameStream video/input protocol and FFmpeg to decode H.264 frames into local
 RGB images.
 
+## Capture pipeline
+
+Decoding retains the latest FFmpeg frame by reference in memory. Cheap frame
+metadata continues to arrive independently; RGB conversion and atomic PPM
+publication happen only for an explicit capture request. Scratch images use
+owner-only permissions and checked writes, without a durability flush. There
+are no periodic RGB file writes while the controller is idle, although video
+decoding and network traffic continue.
+
+The native bridge announces capture protocol 1. Node serializes/coalesces the
+request, matching acknowledgement, and file read; sequence, dimensions, and
+timestamp belong to that acknowledgement. It rejects stale replies, includes
+request/delivery time in a conservative age bound, and waits for newer frames
+after input. An older native binary requires a rebuild.
+
+Pixel-only comparisons and template searches bypass PNG encoding. Image tools
+encode asynchronously and reuse the PNG when retained RGB pixels are unchanged.
+Compression samples the image: incompressible frames use lossless stored blocks,
+while UI frames use fast lossless compression. PNG sizes can increase relative
+to the previous compression; decoded pixels and capture coordinates are unchanged.
+RGB history retains at most twelve snapshots and 96 MiB, with one additional
+encoded-image cache. Evicted snapshot IDs cannot be used again.
+
+All asynchronous PNG paths share a budget of two active jobs and two pending
+jobs. Crop and scanline allocations happen after admission. Excess work returns
+an explicit busy error. Stopping a session removes its queued work; already
+running compression retains its slot until completion and discards its result.
+
+The H.264 decoder uses four slice threads and low-delay mode instead of automatic
+frame threading. This avoids frame-thread buffering on the tested low-delay
+fixtures; it does not add hardware decoding or change the negotiated codec.
+Startup stability uses elapsed time and excludes near-black transitional frames.
+A persistently black or animated Desktop remains usable and is marked unstable.
+
 ## Desktop launch rule
 
 Apollo provider apps are a host-defined launch registry. They are useful only

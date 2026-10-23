@@ -4,13 +4,15 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 jobs:
   javascript-contract:
-    name: JavaScript and MCP contract (${{ matrix.os }})
+    name: JavaScript and MCP contract (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
@@ -20,6 +22,8 @@ jobs:
         node: [20.x, 22.x]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: ${{ matrix.node }}
@@ -41,26 +45,116 @@ jobs:
             exit 1
           }
 
-  native-linux:
-    name: Native bridge (Ubuntu)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+  native-unix:
+    name: Native bridge and fixtures (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22.x
           cache: npm
-      - run: sudo apt-get update && sudo apt-get install -y cmake pkg-config build-essential libssl-dev libavcodec-dev libavutil-dev libswscale-dev
+      - name: Select an isolated native source cache
+        run: echo "MOONLIGHT_CORE_DIR=$RUNNER_TEMP/moonlight-common-c" >> "$GITHUB_ENV"
+      - name: Install native dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config build-essential libssl-dev libavcodec-dev libavutil-dev libswscale-dev python3
+      - name: Install native dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake pkg-config ffmpeg openssl@3
+          echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg)/lib/pkgconfig:$(brew --prefix openssl@3)/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix ffmpeg);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npm run setup:native
       - run: npm run build:native
       - run: npm run doctor -- --strict
+      - name: Verify the production native executable can load without a host
+        shell: bash
+        run: |
+          node --input-type=module - <<'NODE'
+          import assert from 'node:assert/strict';
+          import { spawnSync } from 'node:child_process';
+          import { defaultBridgePath } from './src/paths.js';
+          const result = spawnSync(defaultBridgePath(), [], { input: '', encoding: 'utf8', timeout: 10000 });
+          assert.ifError(result.error);
+          assert.equal(result.status, 2, result.stderr);
+          const events = result.stdout.trim().split(/\r?\n/).map((line) => JSON.parse(line));
+          assert.ok(events.some((event) => event.type === 'configuration_error'));
+          console.log('Native loader passed; empty configuration was rejected without a connection.');
+          NODE
+      - name: Build host-free native capture and decoder fixtures
+        run: |
+          cmake -S native -B native/build -DMOONLIGHT_CORE_DIR="$MOONLIGHT_CORE_DIR" -DMOONLIGHT_BUILD_NATIVE_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build native/build --config Release --parallel
+      - name: Run host-free native fixtures
+        run: ctest --test-dir native/build --build-config Release --output-on-failure --no-tests=error
       - name: Bootstrap install and update (Linux)
+        if: runner.os == 'Linux'
         env:
           MOONLIGHT_MCP_REPOSITORY: ${{ github.workspace }}
           MOONLIGHT_MCP_INSTALL_DIR: ${{ runner.temp }}/moonlight-desktop-mcp-install
           MOONLIGHT_MCP_CONFIGURE_CODEX: "0"
+          MOONLIGHT_MCP_REF: ${{ github.ref == 'refs/heads/main' && 'main' || github.sha }}
         run: |
           bash ./install.sh
           bash ./install.sh
+
+  native-windows:
+    name: Native bridge (Windows x64)
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      VCPKG_DISABLE_METRICS: "1"
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Install native dependencies with the runner's vcpkg
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkgRoot) { throw 'The runner has no VCPKG_INSTALLATION_ROOT.' }
+          $vcpkg = Join-Path $vcpkgRoot 'vcpkg.exe'
+          if (-not (Test-Path $vcpkg)) { throw "vcpkg is missing at $vcpkg." }
+          & git -C $vcpkgRoot rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Could not identify the vcpkg revision.' }
+          # Match the supported install.ps1 dependency route.
+          & $vcpkg install 'ffmpeg[avcodec,swscale]' openssl --triplet x64-windows
+          if ($LASTEXITCODE -ne 0) { throw 'Installing the native dependencies failed.' }
+          "CMAKE_TOOLCHAIN_FILE=$(Join-Path $vcpkgRoot 'scripts/buildsystems/vcpkg.cmake')" >> $env:GITHUB_ENV
+          "MOONLIGHT_CORE_DIR=$(Join-Path $env:RUNNER_TEMP 'moonlight-common-c')" >> $env:GITHUB_ENV
+          (Join-Path $vcpkgRoot 'installed/x64-windows/bin') >> $env:GITHUB_PATH
+      - run: npm ci
+      - run: npm run setup:native
+      - name: Compile with the default MSVC multi-config generator
+        run: npm run build:native
+      - run: npm run doctor -- --strict
+      - name: Verify the production native executable can load without a host
+        shell: bash
+        run: |
+          node --input-type=module - <<'NODE'
+          import assert from 'node:assert/strict';
+          import { spawnSync } from 'node:child_process';
+          import { defaultBridgePath } from './src/paths.js';
+          const result = spawnSync(defaultBridgePath(), [], { input: '', encoding: 'utf8', timeout: 10000 });
+          assert.ifError(result.error);
+          assert.equal(result.status, 2, result.stderr);
+          const events = result.stdout.trim().split(/\r?\n/).map((line) => JSON.parse(line));
+          assert.ok(events.some((event) => event.type === 'configuration_error'));
+          console.log('Native loader passed; empty configuration was rejected without a connection.');
+          NODE

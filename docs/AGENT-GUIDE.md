@@ -43,6 +43,14 @@ capture and visible UI.
    `screen_wait_for_text` for dialogs, menus, and completion labels.
 7. Call `session_stop` after completion, failure, or ambiguity.
 
+Use `screen_find_text` for a known visible label and a scoped `screen_crop` when
+only a small region needs interpretation. The wait tools accept
+`include_image: false` for text-only local verification results. Capture again
+when the result needs semantic interpretation; do not treat arbitrary pixel
+change as proof of the requested outcome. Encoding and background video do not
+consume model tokens; the images/text returned to the client do. Do not infer
+token savings from PNG byte size or capture latency.
+
 ## Interpretation rules
 
 - “Open Valheim” means find and open it from the Desktop or Start menu. It is

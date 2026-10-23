@@ -122,6 +122,36 @@ not use personal files, saved work, or production settings as test fixtures.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for repository rules and
 [ARCHITECTURE.md](ARCHITECTURE.md) for the transport design.
 
+## Capture regression and performance tests
+
+Build and exercise native capture/decoder fixtures without a Windows host:
+
+```sh
+cmake -S native -B native/build -DMOONLIGHT_CORE_DIR="$MOONLIGHT_CORE_DIR" -DMOONLIGHT_BUILD_NATIVE_TESTS=ON
+cmake --build native/build --parallel
+ctest --test-dir native/build --output-on-failure
+```
+
+Set `MOONLIGHT_CORE_DIR` to the initialized cache path printed by `doctor`.
+The optional native test target also needs Python 3 and FFmpeg's libx264 encoder
+for its generated lossless H.264 fixture. It verifies exact decoded pixels,
+buffering, publication, concurrency, allocation errors, and file protection.
+It does not contact Apollo or send input. The JavaScript capture tests exercise
+freshness, coalescing, cancellation, retained snapshots, and PNG losslessness.
+
+Run the reproducible synthetic controller benchmark:
+
+```sh
+node scripts/benchmark-capture.js --iterations 7 --sizes 720p,1080p,4k --output /tmp/moonlight-capture.json
+```
+
+This generates desktop-like and high-entropy RGB fixtures and reports wall/CPU
+time, encoded bytes, and event-loop timer lateness. Fresh and repeated-frame
+captures are separate. It excludes native decode/publication, transport,
+MCP serialization, model reasoning, and token billing. Compare the same host,
+fixture set, and sample count against the old revision. Use a separate
+authorized live Desktop smoke test for the complete capture/input path.
+
 ## Move legacy local state
 
 Older source checkouts stored profiles under their project `data/` directory.

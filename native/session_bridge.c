@@ -1,5 +1,6 @@
 // Headless Moonlight GameStream client. Session secrets arrive on stdin, never
-// in argv or stdout. It atomically publishes the newest decoded RGB PPM frame.
+// in argv or stdout. Decode continuously, retain the newest native frame, and
+// atomically publish an RGB PPM only when the controller requests a capture.
 
 #include <Limelight.h>
 #include <libavcodec/avcodec.h>
@@ -8,7 +9,9 @@
 #include <libavutil/time.h>
 #include <libswscale/swscale.h>
 
+#include <errno.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,11 +26,30 @@
 #endif
 #define fileno _fileno
 #else
+#include <pthread.h>
 #include <unistd.h>
 #endif
 
 #define LINE_SIZE 4096
-#define MIN_FRAME_INTERVAL_US 200000
+#define MIN_NOTIFICATION_INTERVAL_US 33333
+#define MAX_CAPTURE_REQUEST_ID UINT64_C(9007199254740991)
+
+// Independent locks keep frame references and JSON records atomic. RGB work
+// belongs to the command thread and never blocks decode under LatestMutex.
+#ifdef _WIN32
+typedef SRWLOCK BridgeMutex;
+#define BRIDGE_MUTEX_INITIALIZER SRWLOCK_INIT
+static void mutex_lock(BridgeMutex* mutex) { AcquireSRWLockExclusive(mutex); }
+static void mutex_unlock(BridgeMutex* mutex) { ReleaseSRWLockExclusive(mutex); }
+#else
+typedef pthread_mutex_t BridgeMutex;
+#define BRIDGE_MUTEX_INITIALIZER PTHREAD_MUTEX_INITIALIZER
+static void mutex_lock(BridgeMutex* mutex) { pthread_mutex_lock(mutex); }
+static void mutex_unlock(BridgeMutex* mutex) { pthread_mutex_unlock(mutex); }
+#endif
+static BridgeMutex LatestMutex = BRIDGE_MUTEX_INITIALIZER;
+static BridgeMutex CaptureMutex = BRIDGE_MUTEX_INITIALIZER;
+static BridgeMutex OutputMutex = BRIDGE_MUTEX_INITIALIZER;
 
 typedef struct {
     char host[256], app_version[64], gfe_version[64], rtsp_url[1024];
@@ -39,61 +61,72 @@ typedef struct {
     AVCodecContext* decoder;
     AVFrame* frame;
     struct SwsContext* scaler;
+    AVFrame* latest;
+    uint8_t* rgb[4];
+    int rgb_stride[4], rgb_width, rgb_height;
     uint64_t sequence;
-    int64_t last_frame_us;
+    int64_t latest_us, last_notification_us;
 } VideoState;
 
 static SessionConfig Config;
 static VideoState Video;
 
-static void restrict_frame_file(FILE* output) {
+static int restrict_frame_file(FILE* output) {
 #ifndef _WIN32
-    fchmod(fileno(output), S_IRUSR | S_IWUSR);
+    return fchmod(fileno(output), S_IRUSR | S_IWUSR);
 #else
-    // The user-profile ACL supplies the equivalent Windows protection. POSIX
-    // file-mode bits do not map to Windows ACLs, so do not weaken them here.
-    (void)output;
-#endif
-}
-
-static int flush_frame_file(FILE* output) {
-    fflush(output);
-#ifdef _WIN32
-    return _commit(fileno(output));
-#else
-    return fsync(fileno(output));
+    // Files are inside the user-owned session directory; inherit its ACL.
+    (void)output; return 0;
 #endif
 }
 
 static int replace_frame_file(const char* temporary, const char* destination) {
 #ifdef _WIN32
-    return MoveFileExA(temporary, destination, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) ? 0 : -1;
+    // Captures are ephemeral, not durable state. Atomic replacement suffices.
+    return MoveFileExA(temporary, destination, MOVEFILE_REPLACE_EXISTING) ? 0 : -1;
 #else
     return rename(temporary, destination);
 #endif
 }
 
-static void event(const char* type, const char* detail) {
-    if (detail == NULL) printf("{\"type\":\"%s\"}\n", type);
-    else printf("{\"type\":\"%s\",\"detail\":\"%s\"}\n", type, detail);
+static void emit(const char* format, ...) {
+    va_list arguments;
+    mutex_lock(&OutputMutex);
+    va_start(arguments, format); vprintf(format, arguments); va_end(arguments);
     fflush(stdout);
+    mutex_unlock(&OutputMutex);
+}
+
+static void event(const char* type, const char* detail) {
+    if (detail == NULL) emit("{\"type\":\"%s\"}\n", type);
+    else emit("{\"type\":\"%s\",\"detail\":\"%s\"}\n", type, detail);
 }
 
 static void stage(const char* type, int stage_number, int error_code) {
     const char* name = LiGetStageName(stage_number);
-    printf("{\"type\":\"%s\",\"stage\":\"%s\",\"errorCode\":%d}\n", type, name == NULL ? "unknown" : name, error_code);
-    fflush(stdout);
+    emit("{\"type\":\"%s\",\"stage\":\"%s\",\"errorCode\":%d}\n", type, name == NULL ? "unknown" : name, error_code);
 }
 
 static void connection_started(void) { event("connected", NULL); }
-static void connection_terminated(int code) { printf("{\"type\":\"terminated\",\"errorCode\":%d}\n", code); fflush(stdout); }
+static void connection_terminated(int code) { emit("{\"type\":\"terminated\",\"errorCode\":%d}\n", code); }
 static void stage_starting(int number) { stage("stage_starting", number, 0); }
 static void stage_failed(int number, int code) { stage("stage_failed", number, code); }
 
 static void video_cleanup(void) {
+    // Moonlight stops decode callbacks before cleanup. A capture may still own
+    // a reference, so wait for it before releasing the reusable RGB workspace.
+    mutex_lock(&CaptureMutex);
+    mutex_lock(&LatestMutex);
+    av_frame_free(&Video.latest);
+    Video.latest_us = 0; Video.last_notification_us = 0;
+    mutex_unlock(&LatestMutex);
     sws_freeContext(Video.scaler); Video.scaler = NULL;
+    av_freep(&Video.rgb[0]); memset(Video.rgb, 0, sizeof(Video.rgb));
+    memset(Video.rgb_stride, 0, sizeof(Video.rgb_stride));
+    Video.rgb_width = 0; Video.rgb_height = 0;
     av_frame_free(&Video.frame);
     avcodec_free_context(&Video.decoder);
+    mutex_unlock(&CaptureMutex);
 }
 
 static int video_setup(int format, int width, int height, int redraw_rate, void* context, int flags) {
@@ -104,38 +137,98 @@ static int video_setup(int format, int width, int height, int redraw_rate, void*
     Video.decoder = codec == NULL ? NULL : avcodec_alloc_context3(codec);
     Video.frame = av_frame_alloc();
     if (Video.decoder == NULL || Video.frame == NULL) { event("decoder_error", "Unable to allocate FFmpeg decoder state"); video_cleanup(); return -1; }
-    Video.decoder->thread_count = 0;
-    Video.decoder->thread_type = FF_THREAD_FRAME;
+    // Frame threading buffers whole frames before making them visible. Slice
+    // threading preserves per-packet output on low-delay GameStream video.
+    // Bound threads so a capture bridge does not consume every logical CPU.
+    Video.decoder->thread_count = 4;
+    Video.decoder->thread_type = FF_THREAD_SLICE;
+    Video.decoder->flags |= AV_CODEC_FLAG_LOW_DELAY;
     if (avcodec_open2(Video.decoder, codec, NULL) < 0) { event("decoder_error", "Unable to open FFmpeg H.264 decoder"); video_cleanup(); return -1; }
-    Video.last_frame_us = 0;
     return 0;
 }
 
-static int write_frame(AVFrame* source) {
+static int retain_frame(AVFrame* source) {
+    if (source->width <= 0 || source->height <= 0) return -1;
+    AVFrame* retained = av_frame_clone(source);
+    if (retained == NULL) { event("decoder_error", "Unable to retain the newest frame"); return -1; }
     int64_t now = av_gettime_relative();
-    if (now - Video.last_frame_us < MIN_FRAME_INTERVAL_US) return 0;
-    int width = source->width, height = source->height;
-    if (width <= 0 || height <= 0) return -1;
-    Video.scaler = sws_getCachedContext(Video.scaler, width, height, (enum AVPixelFormat)source->format, width, height, AV_PIX_FMT_RGB24, SWS_BILINEAR, NULL, NULL, NULL);
-    if (Video.scaler == NULL) { event("decoder_error", "Unable to create RGB frame scaler"); return -1; }
-    uint8_t* rgb[4] = {0}; int stride[4] = {0};
-    if (av_image_alloc(rgb, stride, width, height, AV_PIX_FMT_RGB24, 1) < 0) { event("decoder_error", "Unable to allocate RGB frame"); return -1; }
-    sws_scale(Video.scaler, (const uint8_t* const*)source->data, source->linesize, 0, height, rgb, stride);
-    char temporary[PATH_MAX + 8];
-    int length = snprintf(temporary, sizeof(temporary), "%s.tmp", Config.frame_path);
-    if (length < 0 || (size_t)length >= sizeof(temporary)) { av_freep(&rgb[0]); event("decoder_error", "Frame path is too long"); return -1; }
-    FILE* output = fopen(temporary, "wb");
-    if (output == NULL) { av_freep(&rgb[0]); event("decoder_error", "Unable to write frame file"); return -1; }
-    restrict_frame_file(output);
-    fprintf(output, "P6\n%d %d\n255\n", width, height);
-    for (int row = 0; row < height; row++) fwrite(rgb[0] + row * stride[0], 1, (size_t)width * 3, output);
-    if (flush_frame_file(output) != 0) { fclose(output); av_freep(&rgb[0]); event("decoder_error", "Unable to flush the newest frame"); return -1; }
-    fclose(output); av_freep(&rgb[0]);
-    if (replace_frame_file(temporary, Config.frame_path) != 0) { event("decoder_error", "Unable to publish the newest frame"); return -1; }
-    Video.last_frame_us = now; Video.sequence++;
-    printf("{\"type\":\"frame\",\"sequence\":%llu,\"width\":%d,\"height\":%d}\n", (unsigned long long)Video.sequence, width, height);
-    fflush(stdout);
+    mutex_lock(&LatestMutex);
+    AVFrame* previous = Video.latest;
+    Video.latest = retained; Video.latest_us = now;
+    uint64_t sequence = ++Video.sequence;
+    bool notify = Video.last_notification_us == 0 || now - Video.last_notification_us >= MIN_NOTIFICATION_INTERVAL_US;
+    if (notify) Video.last_notification_us = now;
+    mutex_unlock(&LatestMutex);
+    av_frame_free(&previous);
+    if (notify) emit("{\"type\":\"frame\",\"sequence\":%llu,\"width\":%d,\"height\":%d,\"ageMs\":0}\n", (unsigned long long)sequence, source->width, source->height);
     return 0;
+}
+
+static bool capture_frame(uint64_t request_id) {
+    const char* error = NULL;
+    AVFrame* source = NULL;
+    FILE* output = NULL;
+    char temporary[PATH_MAX + 8] = {0};
+    bool temporary_created = false;
+    uint64_t sequence = 0;
+    int64_t decoded_us = 0, conversion_start = 0, conversion_end = 0, publish_end = 0;
+    int width = 0, height = 0;
+    mutex_lock(&CaptureMutex);
+    mutex_lock(&LatestMutex);
+    if (Video.latest != NULL) {
+        source = av_frame_clone(Video.latest);
+        sequence = Video.sequence; decoded_us = Video.latest_us;
+        if (source == NULL) error = "Unable to retain capture frame";
+    } else error = "No decoded frame is available";
+    mutex_unlock(&LatestMutex);
+    if (error != NULL) goto finished;
+    width = source->width; height = source->height;
+    conversion_start = av_gettime_relative();
+    Video.scaler = sws_getCachedContext(Video.scaler, width, height, (enum AVPixelFormat)source->format, width, height, AV_PIX_FMT_RGB24, SWS_BILINEAR, NULL, NULL, NULL);
+    if (Video.scaler == NULL) { error = "Unable to create RGB frame scaler"; goto finished; }
+    if (width != Video.rgb_width || height != Video.rgb_height) {
+        av_freep(&Video.rgb[0]); memset(Video.rgb, 0, sizeof(Video.rgb));
+        memset(Video.rgb_stride, 0, sizeof(Video.rgb_stride));
+        Video.rgb_width = 0; Video.rgb_height = 0;
+        if (av_image_alloc(Video.rgb, Video.rgb_stride, width, height, AV_PIX_FMT_RGB24, 1) < 0) { error = "Unable to allocate RGB frame"; goto finished; }
+        Video.rgb_width = width; Video.rgb_height = height;
+    }
+    if (sws_scale(Video.scaler, (const uint8_t* const*)source->data, source->linesize, 0, height, Video.rgb, Video.rgb_stride) != height) { error = "Unable to convert capture frame"; goto finished; }
+    conversion_end = av_gettime_relative();
+    int length = snprintf(temporary, sizeof(temporary), "%s.tmp", Config.frame_path);
+    if (length < 0 || (size_t)length >= sizeof(temporary)) { error = "Frame path is too long"; goto finished; }
+    output = fopen(temporary, "wb");
+    if (output == NULL) { error = "Unable to write capture frame"; goto finished; }
+    temporary_created = true;
+    if (restrict_frame_file(output) != 0 || fprintf(output, "P6\n%d %d\n255\n", width, height) < 0) { error = "Unable to write capture frame"; goto finished; }
+    for (int row = 0; row < height; row++) {
+        size_t bytes = (size_t)width * 3;
+        if (fwrite(Video.rgb[0] + row * Video.rgb_stride[0], 1, bytes, output) != bytes) { error = "Unable to write capture frame"; goto finished; }
+    }
+    // fclose reports buffered-write errors. fsync/_commit/WRITE_THROUGH would
+    // stall the stream for persistence that this replaceable scratch file lacks.
+    int close_result = fclose(output); output = NULL;
+    if (close_result != 0) { error = "Unable to finish capture frame"; goto finished; }
+    if (replace_frame_file(temporary, Config.frame_path) != 0) { error = "Unable to publish capture frame"; goto finished; }
+    temporary_created = false;
+    publish_end = av_gettime_relative();
+finished:
+    if (output != NULL) fclose(output);
+    if (temporary_created) remove(temporary);
+    av_frame_free(&source);
+    if (error != NULL) emit("{\"type\":\"capture_error\",\"requestId\":%llu,\"detail\":\"%s\"}\n", (unsigned long long)request_id, error);
+    else emit("{\"type\":\"capture\",\"requestId\":%llu,\"sequence\":%llu,\"width\":%d,\"height\":%d,\"ageMs\":%.3f,\"conversionMs\":%.3f,\"publishMs\":%.3f}\n", (unsigned long long)request_id, (unsigned long long)sequence, width, height, (av_gettime_relative() - decoded_us) / 1000.0, (conversion_end - conversion_start) / 1000.0, (publish_end - conversion_end) / 1000.0);
+    mutex_unlock(&CaptureMutex);
+    return error == NULL;
+}
+
+static bool parse_capture_request(const char* text, uint64_t* request_id) {
+    if (*text == '\0') return false;
+    for (const char* cursor = text; *cursor; cursor++) if (*cursor < '0' || *cursor > '9') return false;
+    errno = 0; char* end = NULL;
+    unsigned long long value = strtoull(text, &end, 10);
+    if (errno == ERANGE || end == text || *end != '\0' || value == 0 || value > MAX_CAPTURE_REQUEST_ID) return false;
+    *request_id = (uint64_t)value; return true;
 }
 
 static int submit_decode_unit(PDECODE_UNIT unit) {
@@ -152,7 +245,7 @@ static int submit_decode_unit(PDECODE_UNIT unit) {
         int result = avcodec_receive_frame(Video.decoder, Video.frame);
         if (result == AVERROR(EAGAIN) || result == AVERROR_EOF) return DR_OK;
         if (result < 0) return DR_NEED_IDR;
-        if (write_frame(Video.frame) != 0) return DR_NEED_IDR;
+        if (retain_frame(Video.frame) != 0) { av_frame_unref(Video.frame); return DR_NEED_IDR; }
         av_frame_unref(Video.frame);
     }
 }
@@ -208,15 +301,21 @@ static bool send_text_hex(const char* hex) {
 
 static bool command(char* line) {
     int result = -1, x, y, width, height, vk, modifiers, scroll_amount; char first[32], second[32];
+    if (strcmp(line, "capture") == 0 || strncmp(line, "capture ", 8) == 0) {
+        uint64_t request_id = 0;
+        if (strncmp(line, "capture ", 8) != 0 || !parse_capture_request(line + 8, &request_id)) emit("{\"type\":\"capture_error\",\"requestId\":0,\"detail\":\"Capture request ID must be a positive safe integer\"}\n");
+        else capture_frame(request_id);
+        return true;
+    }
     if (strcmp(line, "stop") == 0) { LiStopConnection(); event("stopped", NULL); return false; }
     if (strcmp(line, "frame") == 0) { LiRequestIdrFrame(); event("frame_requested", NULL); return true; }
-    if (strcmp(line, "status") == 0) { uint32_t rtt = 0, variance = 0; if (LiGetEstimatedRttInfo(&rtt, &variance)) printf("{\"type\":\"status\",\"rttMs\":%u,\"rttVarianceMs\":%u}\n", rtt, variance); else printf("{\"type\":\"status\"}\n"); fflush(stdout); return true; }
+    if (strcmp(line, "status") == 0) { uint32_t rtt = 0, variance = 0; if (LiGetEstimatedRttInfo(&rtt, &variance)) emit("{\"type\":\"status\",\"rttMs\":%u,\"rttVarianceMs\":%u}\n", rtt, variance); else emit("{\"type\":\"status\"}\n"); return true; }
     if (sscanf(line, "mouse %d %d %d %d", &x, &y, &width, &height) == 4 && x >= 0 && y >= 0 && width > 0 && height > 0 && x <= SHRT_MAX && y <= SHRT_MAX && width <= SHRT_MAX && height <= SHRT_MAX) result = LiSendMousePositionEvent((short)x, (short)y, (short)width, (short)height);
     else if (sscanf(line, "button %31s %31s", first, second) == 2) { int button = button_from_name(first), action = strcmp(second, "down") == 0 ? BUTTON_ACTION_PRESS : strcmp(second, "up") == 0 ? BUTTON_ACTION_RELEASE : 0; if (button && action) result = LiSendMouseButtonEvent((char)action, button); }
     else if (sscanf(line, "key %d %31s %d", &vk, first, &modifiers) == 3 && vk >= 0 && vk <= UINT16_MAX && modifiers >= 0 && modifiers <= UCHAR_MAX) { int action = strcmp(first, "down") == 0 ? KEY_ACTION_DOWN : strcmp(first, "up") == 0 ? KEY_ACTION_UP : 0; if (action) result = LiSendKeyboardEvent2((short)vk, (char)action, (char)modifiers, SS_KBE_FLAG_NON_NORMALIZED); }
     else if (sscanf(line, "scroll %d", &scroll_amount) == 1 && scroll_amount >= SHRT_MIN && scroll_amount <= SHRT_MAX) result = LiSendHighResScrollEvent((short)scroll_amount);
     else if (strncmp(line, "text ", 5) == 0) result = send_text_hex(line + 5) ? 0 : -1;
-    printf("{\"type\":\"input\",\"result\":%d}\n", result); fflush(stdout); return true;
+    emit("{\"type\":\"input\",\"result\":%d}\n", result); return true;
 }
 
 int main(void) {
@@ -233,8 +332,9 @@ int main(void) {
     video_callbacks.setup = video_setup; video_callbacks.cleanup = video_cleanup; video_callbacks.submitDecodeUnit = submit_decode_unit; video_callbacks.capabilities = CAPABILITY_DIRECT_SUBMIT;
     AUDIO_RENDERER_CALLBACKS audio_callbacks; LiInitializeAudioCallbacks(&audio_callbacks);
     audio_callbacks.init = audio_init; audio_callbacks.decodeAndPlaySample = audio_sample; audio_callbacks.capabilities = CAPABILITY_DIRECT_SUBMIT;
+    emit("{\"type\":\"capabilities\",\"captureProtocol\":1,\"captureMode\":\"on_demand\"}\n");
     int start_result = LiStartConnection(&server, &stream, &connection_callbacks, &video_callbacks, &audio_callbacks, NULL, 0, NULL, 0);
-    if (start_result != 0) { printf("{\"type\":\"connection_error\",\"errorCode\":%d}\n", start_result); fflush(stdout); video_cleanup(); return 1; }
+    if (start_result != 0) { emit("{\"type\":\"connection_error\",\"errorCode\":%d}\n", start_result); video_cleanup(); return 1; }
     char line[LINE_SIZE]; while (fgets(line, sizeof(line), stdin) != NULL) { line[strcspn(line, "\r\n")] = '\0'; if (!command(line)) break; }
     LiStopConnection(); video_cleanup(); return 0;
 }

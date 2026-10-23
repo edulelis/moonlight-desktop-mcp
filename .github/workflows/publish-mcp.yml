@@ -12,24 +12,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Validate and publish server metadata
+  release-tag:
+    name: Verify release tag and metadata versions
     if: github.repository == 'edulelis/moonlight-desktop-mcp'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22.x
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
       - name: Verify release tag
         shell: bash
         run: |
@@ -38,20 +32,57 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match package version $expected_tag." >&2
             exit 1
           fi
+          node --input-type=module - <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const read = (file) => JSON.parse(readFileSync(file, 'utf8'));
+          const version = read('package.json').version;
+          const lock = read('package-lock.json');
+          if (read('server.json').version !== version || lock.version !== version || lock.packages[''].version !== version) {
+            throw new Error('Package, lockfile, and MCP Registry versions must match.');
+          }
+          NODE
 
-      - name: Verify JavaScript and MCP contract
-        run: |
-          npm run check
-          npm test
-          npm pack --dry-run
-          npm audit --audit-level=critical
+  verify:
+    name: Verify the exact tagged commit
+    needs: release-tag
+    # A local reusable workflow is loaded from the same commit as this caller.
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  publish:
+    name: Validate and publish server metadata
+    needs: [release-tag, verify]
+    if: github.repository == 'edulelis/moonlight-desktop-mcp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Reject critical dependency advisories
+        run: npm audit --audit-level=critical
 
       - name: Install official MCP publisher
         shell: bash
         run: |
+          archive="$RUNNER_TEMP/mcp-publisher_linux_amd64.tar.gz"
           curl --proto '=https' --tlsv1.2 -fsSL \
-            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
-            | tar xz mcp-publisher
+            'https://github.com/modelcontextprotocol/registry/releases/download/v1.8.2/mcp-publisher_linux_amd64.tar.gz' \
+            -o "$archive"
+          echo "d0554112d8f7affad9a10041776d63129a60b163c05036ae26caf73ecbbd89c8  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" mcp-publisher
 
       - name: Validate Registry manifest
         run: ./mcp-publisher validate server.json

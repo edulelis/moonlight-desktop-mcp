@@ -50,6 +50,10 @@ test("advertises the Desktop-first visual computer-use contract", async (t) => {
   assert.match(tools.get("host_wake").description, /magic packet/i);
   assert.match(tools.get("provider_app_start").description, /explicit/i);
   assert.equal(tools.get("runtime_status").annotations.readOnlyHint, true);
+  for (const name of ["session_wait_for_change", "screen_wait_for_text"]) {
+    assert.equal(tools.get(name).inputSchema.properties.include_image.type, "boolean");
+    assert.equal(tools.get(name).inputSchema.properties.include_image.default, true);
+  }
 
   const runtimeResult = await client.callTool({ name: "runtime_status", arguments: {} });
   const runtimeStatus = JSON.parse(runtimeResult.content[0].text);

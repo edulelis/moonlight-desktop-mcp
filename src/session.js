@@ -3,12 +3,18 @@ import { EventEmitter } from "node:events";
 import { promises as fs } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { deflateSync } from "node:zlib";
+import * as zlib from "node:zlib";
+import { promisify } from "node:util";
+
+const deflate = promisify(zlib.deflate);
+const TERMINAL_EVENTS = ["stage_failed", "connection_error", "bridge_error", "terminated", "exit", "stopping"];
+const MAX_SNAPSHOT_BYTES = 96 * 1024 * 1024;
 
 import { getServerInfo } from "./host.js";
 import { cancelApp, launchApp, listApps } from "./pairing.js";
 import { applicationDataDirectory, defaultBridgePath } from "./paths.js";
 import { cropRgb, diffRgb } from "./vision.js";
+import { imageWorkQueue } from "./image-work.js";
 
 export const DESKTOP_APP_ID = 881448767;
 
@@ -121,6 +127,7 @@ export function sessionView(session) {
     frameCapturedAt: session.frameCapturedAt,
     lastEvent: session.lastEvent,
     visualBaselineStable: session.visualBaselineStable,
+    capturePerformance: session.capturePerformance ? { ...session.capturePerformance } : undefined,
   };
 }
 
@@ -152,8 +159,9 @@ function crcTable() {
 const CRC_TABLE = crcTable();
 
 function crc32(buffer) {
+  if (zlib.crc32) return zlib.crc32(buffer);
   let current = 0xffffffff;
-  for (const byte of buffer) current = CRC_TABLE[(current ^ byte) & 0xff] ^ (current >>> 8);
+  for (let index = 0; index < buffer.length; index++) current = CRC_TABLE[(current ^ buffer[index]) & 0xff] ^ (current >>> 8);
   return (current ^ 0xffffffff) >>> 0;
 }
 
@@ -202,7 +210,7 @@ export function ppmToRgb(ppm) {
   return { width, height, pixels: Buffer.from(ppm.subarray(dataOffset, dataOffset + sourceLength)) };
 }
 
-export function rgbToPng({ width, height, pixels }) {
+function pngInput({ width, height, pixels }) {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || !Buffer.isBuffer(pixels) || pixels.length !== width * height * 3) {
     throw new Error("Invalid RGB frame.");
   }
@@ -217,20 +225,62 @@ export function rgbToPng({ width, height, pixels }) {
   header.writeUInt32BE(height, 4);
   header[8] = 8;
   header[9] = 2; // RGB
+  return { width, height, header, scanlines };
+}
+
+function pngImage({ width, height, header }, compressed) {
   return {
     width,
     height,
     png: Buffer.concat([
       Buffer.from("89504e470d0a1a0a", "hex"),
       pngChunk("IHDR", header),
-      pngChunk("IDAT", deflateSync(scanlines)),
+      pngChunk("IDAT", compressed),
       pngChunk("IEND", Buffer.alloc(0)),
     ]),
   };
 }
 
+export function rgbToPng(rgb) {
+  const input = pngInput(rgb);
+  return pngImage(input, zlib.deflateSync(input.scanlines));
+}
+
+async function encodeRgbToPng(rgb) {
+  const input = pngInput(rgb);
+  // Spending hundreds of milliseconds trying to compress noise buys no useful
+  // size reduction. Sample across the frame, then use lossless stored blocks
+  // for incompressible pixels; ordinary UI frames use fast compression.
+  const sampleSize = Math.min(input.scanlines.length, 16 * 1024);
+  const sample = Buffer.allocUnsafe(sampleSize);
+  for (let offset = 0; offset < sampleSize; offset += 1024) {
+    const length = Math.min(1024, sampleSize - offset);
+    const source = Math.floor(offset / sampleSize * Math.max(0, input.scanlines.length - length));
+    input.scanlines.copy(sample, offset, source, source + length);
+  }
+  const level = zlib.deflateSync(sample, { level: 1 }).length >= sampleSize * 0.97 ? 0 : 3;
+  return pngImage(input, await deflate(input.scanlines, { level }));
+}
+
+export function rgbToPngAsync(rgb, { signal } = {}) {
+  return imageWorkQueue.run(() => encodeRgbToPng(typeof rgb === "function" ? rgb() : rgb), { signal });
+}
+
 export function ppmToPng(ppm) {
   return rgbToPng(ppmToRgb(ppm));
+}
+
+export function isNearlyBlackFrame({ pixels }) {
+  // Apollo's virtual display can initially be black except for the cursor.
+  // Quiet pixels alone do not prove that its Desktop surface is ready.
+  const stride = Math.max(1, Math.ceil(pixels.length / 3 / 8192)) * 3;
+  let samples = 0;
+  let visible = 0;
+  for (let offset = 0; offset < pixels.length; offset += stride) {
+    samples++;
+    if (pixels[offset] > 16 || pixels[offset + 1] > 16 || pixels[offset + 2] > 16) visible++;
+  }
+  return samples === 0 || visible / samples < 0.001;
 }
 
 export class SessionManager extends EventEmitter {
@@ -320,6 +370,11 @@ export class SessionManager extends EventEmitter {
         snapshotOrder: [],
         latestSnapshotId: null,
         templates: new Map(),
+        captureProtocol: null,
+        captureRequestId: 0,
+        captureInFlight: null,
+        capturePerformance: { captures: 0, pngEncodes: 0, pngCacheHits: 0 },
+        inputSequence: -1,
       };
       this.sessions.set(id, session);
 
@@ -403,6 +458,7 @@ export class SessionManager extends EventEmitter {
     session.lastNativeEvent = event;
     session.lastEvent = event.type;
     if (event.type === "connected") session.state = "active";
+    if (event.type === "capabilities") session.captureProtocol = event.captureProtocol;
     if (event.type === "frame") {
       session.frameSequence = event.sequence;
       session.width = event.width;
@@ -434,7 +490,8 @@ export class SessionManager extends EventEmitter {
 
   waitFor(session, predicate, timeoutMs) {
     if (session.lastNativeEvent && predicate(session.lastNativeEvent)) return Promise.resolve(session.lastNativeEvent);
-    return new Promise((resolve, reject) => {
+    let cancel;
+    const waiting = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         session.waiters = session.waiters.filter((waiter) => waiter !== current);
         reject(new Error("Timed out waiting for Moonlight transport startup."));
@@ -444,7 +501,13 @@ export class SessionManager extends EventEmitter {
         resolve: (event) => { clearTimeout(timeout); resolve(event); },
       };
       session.waiters.push(current);
+      cancel = () => {
+        clearTimeout(timeout);
+        session.waiters = session.waiters.filter((waiter) => waiter !== current);
+      };
     });
+    waiting.cancel = cancel;
+    return waiting;
   }
 
   async waitForVisualBaseline(session) {
@@ -452,15 +515,15 @@ export class SessionManager extends EventEmitter {
     let previous = null;
     let stablePairs = 0;
     let lastComparison = null;
-    for (let attempt = 0; attempt < 14; attempt++) {
+    const startedAt = Date.now();
+    for (let attempt = 0; attempt < 24; attempt++) {
       const event = await this.waitFor(session, (next) =>
         (next.type === "frame" && next.sequence > sequence) ||
-        ["stage_failed", "connection_error", "bridge_error", "terminated", "exit"].includes(next.type), 5_000);
+        TERMINAL_EVENTS.includes(next.type), 5_000);
       if (event.type !== "frame") throw new Error(`Moonlight transport ended before its visual baseline was ready (${event.type}).`);
       sequence = event.sequence;
-      const capture = await this.capture(session.id, 10_000);
-      const current = this.getSnapshot(session.id, capture.snapshotId);
-      if (previous && current.frameSequence >= 6) {
+      const current = await this.captureSnapshot(session.id, 500);
+      if (previous && Date.now() - startedAt >= 750 && !isNearlyBlackFrame(current)) {
         lastComparison = diffRgb(previous, current, { pixelThreshold: 32 });
         if (lastComparison.changedPixelFraction < 0.003) stablePairs++;
         else stablePairs = 0;
@@ -469,8 +532,11 @@ export class SessionManager extends EventEmitter {
           session.visualBaselineStable = true;
           return current;
         }
-      }
+      } else stablePairs = 0;
       previous = current;
+      // Sample stability over time, not a fixed frame count: metadata can now
+      // arrive at 30 fps, independently of expensive RGB publication.
+      await delay(100);
     }
     // Games, video, and animated launchers may never have two quiet frames.
     // They are still usable Desktop sessions; expose that fact so callers can
@@ -481,35 +547,141 @@ export class SessionManager extends EventEmitter {
     return previous;
   }
 
-  async capture(sessionId, maxAgeMs = 500) {
-    const session = this.find(sessionId);
-    if (session.state !== "active") throw new Error(`Session '${sessionId}' is not active (${session.state}).`);
-    if (!session.frameCapturedAt || Date.now() - Date.parse(session.frameCapturedAt) > maxAgeMs) {
-      const previousSequence = session.frameSequence;
-      this.send(sessionId, "frame");
-      const event = await this.waitFor(session, (next) => (next.type === "frame" && next.sequence > previousSequence) || ["stage_failed", "connection_error", "exit"].includes(next.type), 4_000);
+  async requestFrame(session, maxAgeMs) {
+    if (session.captureProtocol !== 1) {
+      throw new Error("The native bridge does not support on-demand capture. Rebuild it with npm run build:native.");
+    }
+    if (!session.frameCapturedAt || Date.now() - Date.parse(session.frameCapturedAt) > maxAgeMs || session.frameSequence <= (session.inputSequence ?? -1)) {
+      const previousSequence = Math.max(session.frameSequence, session.inputSequence ?? -1);
+      const waiting = this.waitFor(session, (next) => (next.type === "frame" && next.sequence > previousSequence) || TERMINAL_EVENTS.includes(next.type), 4_000);
+      // IDR is recovery for a stalled decoder, not the normal screenshot path.
+      try {
+        if (!session.frameCapturedAt || Date.now() - Date.parse(session.frameCapturedAt) > maxAgeMs) this.send(session.id, "frame");
+      } catch (error) { waiting.cancel?.(); throw error; }
+      const event = await waiting;
       if (event.type !== "frame") throw new Error("No fresh video frame is available from the Moonlight session.");
     }
+    const requestId = ++session.captureRequestId;
+    const requestedAt = Date.now();
+    const waiting = this.waitFor(session, (event) =>
+      ((event.type === "capture" || event.type === "capture_error") && event.requestId === requestId) || TERMINAL_EVENTS.includes(event.type), 4_000);
+    try { this.send(session.id, `capture ${requestId}`); }
+    catch (error) { waiting.cancel?.(); throw error; }
+    const reply = await waiting;
+    if (reply.type === "capture_error") throw new Error(`Moonlight capture failed: ${reply.detail ?? "native publication failed"}.`);
+    if (reply.type !== "capture") throw new Error(`Moonlight transport ended during capture (${reply.type}).`);
+    // Native age is measured before the stdout delivery/Node event queue.
+    // Counting the full request round trip gives a conservative age bound;
+    // delayed replies must never make old pixels appear newly captured.
+    const frameCapturedAt = requestedAt - reply.ageMs;
+    if (!Number.isSafeInteger(reply.sequence) || reply.sequence < 1 || !Number.isFinite(reply.ageMs) || reply.ageMs < 0 || Date.now() - frameCapturedAt > maxAgeMs || reply.sequence <= (session.inputSequence ?? -1)) {
+      throw new Error("The native bridge returned a stale or invalid capture.");
+    }
+    const readStarted = performance.now();
     const rgb = ppmToRgb(await fs.readFile(session.framePath));
-    const snapshot = this.rememberSnapshot(session, rgb);
-    return { ...sessionView(session), ...rgbToPng(rgb), snapshotId: snapshot.id, pixels: snapshot.pixels };
+    if (Date.now() - frameCapturedAt > maxAgeMs) throw new Error("The published capture expired while reading its pixels.");
+    if (rgb.width !== reply.width || rgb.height !== reply.height) throw new Error("Native capture dimensions do not match the published pixels.");
+    Object.assign(session.capturePerformance, {
+      nativeConversionMs: reply.conversionMs,
+      nativePublishMs: reply.publishMs,
+      pixelReadMs: performance.now() - readStarted,
+      decodedFrameAgeMs: reply.ageMs,
+    });
+    return { rgb, frameSequence: reply.sequence, frameCapturedAt: new Date(frameCapturedAt).toISOString() };
   }
 
-  rememberSnapshot(session, rgb) {
+  async captureSnapshot(sessionId, maxAgeMs = 500) {
+    const session = this.find(sessionId);
+    if (session.state !== "active") throw new Error(`Session '${sessionId}' is not active (${session.state}).`);
+    if (!Number.isFinite(maxAgeMs) || maxAgeMs < 1) throw new Error("maxAgeMs must be a positive number.");
+    const usable = (snapshot) => snapshot && snapshot.frameSequence > (session.inputSequence ?? -1) && Date.now() - Date.parse(snapshot.frameCapturedAt) <= maxAgeMs;
+    const latest = session.snapshots.get(session.latestSnapshotId);
+    if (usable(latest) && latest.frameSequence === session.frameSequence) return latest;
+    if (session.captureInFlight) {
+      const snapshot = await session.captureInFlight;
+      if (usable(snapshot)) return snapshot;
+      return this.captureSnapshot(sessionId, maxAgeMs);
+    }
+    const started = performance.now();
+    session.capturePerformance ??= { captures: 0, pngEncodes: 0, pngCacheHits: 0 };
+    session.captureInFlight = (async () => {
+      const frame = await this.requestFrame(session, maxAgeMs);
+      if (session.state !== "active") throw new Error(`Session '${sessionId}' ended during capture.`);
+      const snapshot = this.rememberSnapshot(session, frame.rgb, frame);
+      session.capturePerformance.captures++;
+      session.capturePerformance.captureMs = performance.now() - started;
+      return snapshot;
+    })();
+    try { return await session.captureInFlight; }
+    finally { session.captureInFlight = null; }
+  }
+
+  async snapshotPng(sessionId, snapshotId) {
+    const session = this.find(sessionId);
+    const signal = this.imageSignal(sessionId);
+    session.capturePerformance ??= { captures: 0, pngEncodes: 0, pngCacheHits: 0 };
+    const snapshot = this.getSnapshot(sessionId, snapshotId);
+    const cached = session.encodedFrame;
+    if (cached && cached.width === snapshot.width && cached.height === snapshot.height && cached.pixels.equals(snapshot.pixels)) {
+      session.capturePerformance.pngCacheHits++;
+      const png = await cached.promise;
+      signal.throwIfAborted();
+      return png;
+    }
+    const started = performance.now();
+    const encoded = { width: snapshot.width, height: snapshot.height, pixels: snapshot.pixels };
+    encoded.promise = rgbToPngAsync(snapshot, { signal }).then((image) => {
+      session.capturePerformance.pngEncodeMs = performance.now() - started;
+      return image.png;
+    }).catch((error) => {
+      if (session.encodedFrame === encoded) session.encodedFrame = null;
+      throw error;
+    });
+    session.capturePerformance.pngEncodes++;
+    session.encodedFrame = encoded;
+    return encoded.promise;
+  }
+
+  imageSignal(sessionId) {
+    const session = this.find(sessionId);
+    if (session.state !== "active") throw new Error(`Session '${sessionId}' is not accepting image work (${session.state}).`);
+    session.imageAbortController ??= new AbortController();
+    return session.imageAbortController.signal;
+  }
+
+  async cropPng(sessionId, snapshotId, region) {
+    const signal = this.imageSignal(sessionId);
+    const snapshot = this.getSnapshot(sessionId, snapshotId);
+    // Queue admission precedes crop allocation, not just zlib compression.
+    return rgbToPngAsync(() => cropRgb(snapshot, region), { signal });
+  }
+
+  async capture(sessionId, maxAgeMs = 500) {
+    const snapshot = await this.captureSnapshot(sessionId, maxAgeMs);
+    const png = await this.snapshotPng(sessionId, snapshot.id);
+    return { ...sessionView(this.find(sessionId)), width: snapshot.width, height: snapshot.height, frameSequence: snapshot.frameSequence, frameCapturedAt: snapshot.frameCapturedAt, png, snapshotId: snapshot.id, pixels: snapshot.pixels };
+  }
+
+  rememberSnapshot(session, rgb, metadata = session) {
     const latest = session.latestSnapshotId ? session.snapshots.get(session.latestSnapshotId) : null;
-    if (latest && latest.frameSequence === session.frameSequence && latest.width === rgb.width && latest.height === rgb.height) return latest;
+    if (latest && latest.frameSequence === metadata.frameSequence && latest.width === rgb.width && latest.height === rgb.height) return latest;
     const snapshot = {
-      id: `${session.id}-${session.frameSequence}-${randomBytes(4).toString("hex")}`,
+      id: `${session.id}-${metadata.frameSequence}-${randomBytes(4).toString("hex")}`,
       width: rgb.width,
       height: rgb.height,
-      pixels: Buffer.from(rgb.pixels),
-      frameSequence: session.frameSequence,
-      frameCapturedAt: session.frameCapturedAt,
+      pixels: rgb.pixels,
+      frameSequence: metadata.frameSequence,
+      frameCapturedAt: metadata.frameCapturedAt,
     };
     session.snapshots.set(snapshot.id, snapshot);
     session.snapshotOrder.push(snapshot.id);
     session.latestSnapshotId = snapshot.id;
-    while (session.snapshotOrder.length > 12) session.snapshots.delete(session.snapshotOrder.shift());
+    session.snapshotBytes = (session.snapshotBytes ?? 0) + snapshot.pixels.length;
+    while (session.snapshotOrder.length > 1 && (session.snapshotOrder.length > 12 || session.snapshotBytes > MAX_SNAPSHOT_BYTES)) {
+      const expired = session.snapshots.get(session.snapshotOrder.shift());
+      session.snapshotBytes -= expired.pixels.length;
+      session.snapshots.delete(expired.id);
+    }
     return snapshot;
   }
 
@@ -559,15 +731,14 @@ export class SessionManager extends EventEmitter {
       try {
         event = await this.waitFor(session, (next) =>
           (next.type === "frame" && next.sequence > sequence) ||
-          ["stage_failed", "connection_error", "bridge_error", "terminated", "exit"].includes(next.type), Math.min(remaining, 1_000));
+          TERMINAL_EVENTS.includes(next.type), Math.min(remaining, 1_000));
       } catch {
         this.send(sessionId, "frame");
         continue;
       }
       if (event.type !== "frame") throw new Error(`Moonlight transport ended while waiting for a visual change (${event.type}).`);
       sequence = event.sequence;
-      const capture = await this.capture(sessionId, 10_000);
-      current = this.getSnapshot(sessionId, capture.snapshotId);
+      current = await this.captureSnapshot(sessionId, 500);
       comparison = this.diffRegion(baseline, current, { pixelThreshold, region });
       if (comparison.changedPixelFraction >= minChangedFraction) {
         return { changed: true, baseline, current, comparison };
@@ -594,6 +765,7 @@ export class SessionManager extends EventEmitter {
   send(sessionId, command) {
     const session = this.find(sessionId);
     if (session.state !== "active" || !session.child?.stdin.writable) throw new Error(`Session '${sessionId}' is not accepting input.`);
+    if (/^(mouse|button|key|scroll|text)\s/.test(command)) session.inputSequence = session.frameSequence;
     session.child.stdin.write(`${command}\n`);
     return sessionView(session);
   }
@@ -615,6 +787,8 @@ export class SessionManager extends EventEmitter {
     session.stopping = true;
     session.state = "stopping";
     session.lastEvent = "stopping";
+    session.imageAbortController?.abort(new Error(`Session '${session.id}' ended during image processing.`));
+    this.handleBridgeEvent(session, { type: "stopping" });
     let childExit;
     if (session.child && session.child.exitCode === null) {
       childExit = new Promise((resolve) => session.child.once("exit", resolve));
@@ -623,6 +797,7 @@ export class SessionManager extends EventEmitter {
     if (childExit) await Promise.race([childExit, new Promise((resolve) => setTimeout(resolve, 5_000))]);
     if (session.launched && cancelRemote) await cancelApp(session.profile).catch(() => {});
     session.state = "ended";
+    session.encodedFrame = null;
     if (!keepRecord) this.sessions.delete(session.id);
     return sessionView(session);
   }
